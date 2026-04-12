@@ -35,6 +35,36 @@ This repository contains a Claude Code skill that converts PDFs to Markdown.
   - `Atari-Compendium.pdf` for broader digital-manual structure checks
   - `GEM_RCS-2.pdf` only for OCR-related work because it is slower and scan-based
 
+## Anti-Overfitting Guidance
+
+- Treat the PDFs in `tests/pdf/` as regression fixtures, not as templates for the converter.
+- Changes to conversion logic must solve a general extraction problem, not a document-specific quirk from one fixture.
+- Prefer stronger source signals over special cases:
+  - embedded outline
+  - visible TOC layout
+  - source-page typography
+  - page geometry
+  - indentation
+  - column alignment
+  - repeated visual structure
+- For listings, prefer structure-based recovery over language-specific detection. Do not tune code-block handling around C, assembler, or wording from a single manual unless the rule clearly generalizes.
+- For headings and TOC reconstruction, do not rely mainly on title text, numbering style, or document-specific labels. Use those only as weak supporting signals.
+- If a fix improves one fixture but degrades another, prefer the more general and conservative behavior.
+- Do not add publisher-specific, title-specific, or corpus-specific hacks unless they can be justified as a generic document-structure rule.
+- When changing thresholds or heuristics, validate against more than one fixture, especially one that exercises a different failure mode.
+- Use the fixtures to catch regressions in:
+  - listing preservation
+  - heading reconstruction
+  - OCR behavior
+  - image extraction
+  - conservative fallback behavior
+- Every new heuristic should be explainable in terms of a general document-structure problem. If it can only be justified by naming one fixture, it is probably too narrow.
+
+## Change Intent
+
+- The goal is not to make `PureC`, `cmanship`, `WD1772`, or any other single fixture look perfect in isolation.
+- The goal is to keep the converter robust across mixed technical PDFs by improving general structure recovery.
+
 ## Markdown Quality Improvements
 
 The converter includes a substantial post-processing pass, now mainly in `converter/cleanup.py`, to improve Markdown quality for technical books and manuals.
