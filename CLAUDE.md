@@ -13,17 +13,31 @@ This repository contains a Claude Code skill that converts PDFs to Markdown.
   - macOS: Apple Vision via `ocrmac`
   - other platforms: RapidOCR
   - explicit fallback: Tesseract
-- Structured repair model:
-  - build layout-aware regions from positioned page text
-  - classify regions by structural signals
-  - render regions as prose, preformatted blocks, or tables
-- Lightweight internal modules now extracted:
-  - `pdfmd_models.py`
-  - `pdfmd_ocr.py`
+- The converter is now split into an internal `converter/` package:
+  - `converter/text.py`
+  - `converter/models.py`
+  - `converter/ocr.py`
+  - `converter/headings.py`
+  - `converter/cleanup.py`
+  - `converter/regions.py`
+  - `converter/convert.py`
+- `.claude/skills/pdf-to-markdown/pdf_to_markdown.py` should stay a thin CLI entry point and compatibility surface, not become a new monolith again.
+
+## Verification Workflow
+
+- For a quick smoke test after converter changes, use `PureC_English_Overview-JLG.pdf`.
+- Command:
+  - `uv run .claude/skills/pdf-to-markdown/pdf_to_markdown.py tests/pdf/PureC_English_Overview-JLG.pdf`
+- This is the preferred fast end-to-end check because it is born-digital, small enough to run quickly, and exercises heading repair plus important preformatted listing recovery.
+- Use the larger fixtures only when the change specifically affects them:
+  - `cmanship-v1.0.pdf` for larger listings and image extraction
+  - `WD1772-JLG.pdf` for visible-TOC heading reconstruction
+  - `Atari-Compendium.pdf` for broader digital-manual structure checks
+  - `GEM_RCS-2.pdf` only for OCR-related work because it is slower and scan-based
 
 ## Markdown Quality Improvements
 
-The converter includes a substantial post-processing pass in `.claude/skills/pdf-to-markdown/pdf_to_markdown.py` to improve Markdown quality for technical books and manuals.
+The converter includes a substantial post-processing pass, now mainly in `converter/cleanup.py`, to improve Markdown quality for technical books and manuals.
 
 Current cleanup includes:
 
@@ -83,6 +97,7 @@ Contents-related structure is treated primarily as internal metadata:
 - `tests/regression_cases.py` defines the sample corpus and suites
 - `tests/run_regression_checks.py` runs sample-PDF checks when the referenced PDFs are available locally
 - `tests/pdf/` now provides the sample PDF regression corpus as a Git submodule
+- Keep quick iteration biased toward unit tests plus the PureC smoke test before running heavier fixtures
 
 ## Sample PDFs Used During Validation
 

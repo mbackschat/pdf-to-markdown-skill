@@ -6,7 +6,7 @@ import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .pdfmd_models import OcrResolution
+    from .models import OcrResolution
 
 
 def map_lang_codes(langs: list[str], target: str) -> str:
@@ -88,7 +88,7 @@ def resolve_ocr_resolution(
     engine: str,
 ):
     """Resolve explicit OCR policy for this conversion run."""
-    from pdfmd_models import OcrResolution
+    from .models import OcrResolution
 
     auto_ocr = auto_ocr_requested and image_only_pages > 0
     enabled = force_ocr_requested or auto_ocr

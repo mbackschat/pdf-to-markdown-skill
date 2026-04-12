@@ -24,12 +24,12 @@ def load_module():
 
 
 pdf_to_markdown = load_module()
-pdfmd_ocr = sys.modules["pdfmd_ocr"]
+ocr = sys.modules["converter.ocr"]
 
 
 class OcrResolutionTests(unittest.TestCase):
     def test_ocr_disabled_without_flags(self):
-        with mock.patch.object(pdfmd_ocr, "pick_ocr_backend", return_value="rapidocr"):
+        with mock.patch.object(ocr, "pick_ocr_backend", return_value="rapidocr"):
             result = pdf_to_markdown.resolve_ocr_resolution(
                 force_ocr_requested=False,
                 auto_ocr_requested=False,
@@ -42,7 +42,7 @@ class OcrResolutionTests(unittest.TestCase):
         self.assertIsNone(result.backend)
 
     def test_auto_ocr_requires_flag_and_image_only_pages(self):
-        with mock.patch.object(pdfmd_ocr, "pick_ocr_backend", return_value="rapidocr"):
+        with mock.patch.object(ocr, "pick_ocr_backend", return_value="rapidocr"):
             result = pdf_to_markdown.resolve_ocr_resolution(
                 force_ocr_requested=False,
                 auto_ocr_requested=True,
@@ -55,7 +55,7 @@ class OcrResolutionTests(unittest.TestCase):
         self.assertEqual(result.backend, "rapidocr")
 
     def test_force_ocr_overrides_page_mix(self):
-        with mock.patch.object(pdfmd_ocr, "pick_ocr_backend", return_value="mac"):
+        with mock.patch.object(ocr, "pick_ocr_backend", return_value="mac"):
             result = pdf_to_markdown.resolve_ocr_resolution(
                 force_ocr_requested=True,
                 auto_ocr_requested=False,
