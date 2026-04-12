@@ -2,8 +2,6 @@
 
 This repository contains a Claude Code skill that converts PDFs to Markdown.
 
-Detailed status-quo behavior is documented in [CONVERSION-DETAILS.md](./CONVERSION-DETAILS.md). A findings-first review of the current Python script lives in [CODE_REVIEW.md](./CODE_REVIEW.md).
-
 ## Current Architecture
 
 - Main extractor: `PyMuPDF4LLM`
@@ -82,8 +80,9 @@ Contents-related structure is treated primarily as internal metadata:
 ## Regression Helpers
 
 - `tests/test_cleanup_primitives.py` covers OCR policy and core cleanup helpers
-- `tests/regression_cases.py` defines the configurable sample corpus and suites
+- `tests/regression_cases.py` defines the sample corpus and suites
 - `tests/run_regression_checks.py` runs sample-PDF checks when the referenced PDFs are available locally
+- `tests/pdf/` now provides the sample PDF regression corpus as a Git submodule
 
 ## Sample PDFs Used During Validation
 

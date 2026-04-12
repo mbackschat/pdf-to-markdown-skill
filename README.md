@@ -2,8 +2,6 @@
 
 A [Claude Code skill](https://code.claude.com/docs/en/skills.md) that converts PDF files to Markdown with a digital-first pipeline based on [PyMuPDF4LLM](https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/). It is optimized for technical documentation such as datasheets, hardware manuals, and programming guides with tables, diagrams, and code listings.
 
-The current implementation is documented in more depth in [CONVERSION-DETAILS.md](./CONVERSION-DETAILS.md). A findings-first review of the Python script lives in [CODE_REVIEW.md](./CODE_REVIEW.md).
-
 ## Features
 
 - **Digital-first extraction** -- born-digital PDFs are handled by PyMuPDF4LLM for better native structure recovery
@@ -132,7 +130,7 @@ The repo now includes lightweight cleanup checks:
 - [tests/run_regression_checks.py](./tests/run_regression_checks.py) for real sample PDFs when those files are available locally
 - [tests/regression_cases.py](./tests/regression_cases.py) for the configurable sample corpus and grouped regression suites
 
-The sample PDF root defaults to the Atari-ST fixture folder used during development, but can be overridden with `PDF_TO_MARKDOWN_SAMPLE_DIR`.
+The sample PDF root now defaults to [tests/pdf](./tests/pdf). You can still override it with `PDF_TO_MARKDOWN_SAMPLE_DIR`.
 
 ## Project Structure
 
@@ -145,8 +143,7 @@ The sample PDF root defaults to the Atari-ST fixture folder used during developm
       pdfmd_models.py       # Shared converter data structures
       pdfmd_ocr.py          # OCR policy and backend helpers
 CLAUDE.md                   # Repo-level notes, architecture summary, and known limitations
-CONVERSION-DETAILS.md       # Full status-quo architecture walkthrough
-CODE_REVIEW.md              # Findings-first review of the current script
+tests/pdf/                  # Sample PDF regression corpus submodule
 ```
 
 ## License

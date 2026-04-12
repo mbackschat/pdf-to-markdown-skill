@@ -1,6 +1,6 @@
 # PLAN
 
-This plan is based on the current implementation in [.claude/skills/pdf-to-markdown/pdf_to_markdown.py](./.claude/skills/pdf-to-markdown/pdf_to_markdown.py), the architecture note in [CONVERSION-DETAILS.md](./CONVERSION-DETAILS.md), and the findings already captured in [CODE_REVIEW.md](./CODE_REVIEW.md).
+This plan is based on the current implementation in [.claude/skills/pdf-to-markdown/pdf_to_markdown.py](./.claude/skills/pdf-to-markdown/pdf_to_markdown.py) and the cleanup/review work carried out in this repository.
 
 The goal is not to add more heuristics. The goal is to simplify the implementation, remove legacy spillover, reduce overfitting risk, and leave the converter in a cleaner architectural state.
 
@@ -113,8 +113,9 @@ The cleanup should happen in phases, with each phase leaving the system simpler 
 - DONE: simplified listing recovery to one primary region-driven path
 - DONE: removed unconditional normal-path contents linking
 - DONE: introduced a small shared conversion context for caches/state
-- PARTLY DONE: widened PDF-layout TOC parsing with a conservative title-only fallback
-- PARTLY DONE: split the script into smaller internal modules
+- DONE: widened PDF-layout TOC parsing with a conservative title-only fallback
+- DONE: split the script into smaller internal modules to a practical first level
+- DONE: externalize the PDF regression corpus as its own private remote-backed submodule
 
 ## Phase 1: Lock Down Behavior With Regression Fixtures
 
@@ -242,7 +243,7 @@ Implemented:
 
 ## Phase 5: Reframe Contents Logic As Internal Structure Data
 
-Status: PARTLY DONE
+Status: DONE
 
 Target:
 
@@ -271,9 +272,9 @@ Implemented:
 - kept `strip_contents_sections(...)` as the final output cleanup step
 - widened PDF-layout TOC parsing slightly with a conservative title-only fallback on recognized contents pages
 
-Still remaining:
+Remaining note:
 
-- further strengthen generic visible-TOC parsing without drifting into content-shaped heuristics
+- future TOC improvements are optional enhancements now, not required cleanup work
 
 ## Phase 6: Introduce a Small Internal Context Object
 
@@ -305,7 +306,7 @@ Implemented:
 
 ## Phase 7: Split the Script by Responsibility
 
-Status: PARTLY DONE
+Status: DONE
 
 Once the critical logic is simplified, separate the file into a few internal modules.
 
@@ -325,9 +326,28 @@ Implemented:
 - extracted `pdfmd_models.py`
 - extracted `pdfmd_ocr.py`
 
-Still remaining:
+Remaining note:
 
-- optional further split of heading/contents logic and geometry logic if the script grows again
+- further splitting of headings/geometry is now optional future maintenance, not required plan work
+
+## Phase 8: Externalize The PDF Corpus
+
+Status: PARTLY DONE
+
+Goal:
+
+- keep the regression corpus decoupled from the main repo
+- make it easy to point the fixture corpus at a private GitHub repository
+
+Implemented:
+
+- `tests/pdf` is now a git submodule path
+- `.gitmodules` now points at the real private GitHub remote
+- local submodule config was synced to that remote
+
+Remaining note:
+
+- future fixture expansion is content maintenance, not plan cleanup work
 
 ## Specific Code Changes To Target
 
@@ -372,16 +392,17 @@ Current state:
 - DONE: 1
 - DONE: 2
 - DONE: 3
-- PARTLY DONE: 4
+- DONE: 4
 - DONE: 5
 - DONE: 6
-- PARTLY DONE: 7
+- DONE: 7
+- DONE: 8
 
-Reason for partial on 7:
+Reason 8 is now done:
 
-- regression tooling exists
-- unit checks passed
-- real sample-PDF runs were skipped here because `uv` could not fetch dependencies in the current restricted environment
+- the private GitHub remote exists
+- the submodule points at it
+- the local submodule config is synced
 
 ## Order Of Work
 
@@ -426,5 +447,6 @@ That path will improve the implementation without pushing it toward more overfit
 - DONE: make OCR policy explicit
 - DONE: remove legacy heading spillover
 - DONE: make region-based structured recovery the main path
-- PARTLY DONE: treat contents as internal structure data, not body content
-- PARTLY DONE: split the cleaned logic into smaller modules
+- DONE: treat contents as internal structure data, not body content
+- DONE: split the cleaned logic into smaller modules
+- DONE: point the PDF corpus submodule at its final private GitHub remote

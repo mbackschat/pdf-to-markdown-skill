@@ -21,8 +21,7 @@ It also performs a region-based structural repair pass that can reconstruct:
 - multi-page listings that were split only by chunk/page boundaries
 
 Repository-wide implementation notes and current limitations live in the root `CLAUDE.md`.
-The full current pipeline is described in `CONVERSION-DETAILS.md`, and script review findings live in `CODE_REVIEW.md`.
-Regression helpers live under `tests/`, with `PDF_TO_MARKDOWN_SAMPLE_DIR` available to point them at a local sample corpus.
+Regression helpers live under `tests/`, and the default sample corpus now lives in `tests/pdf/`. `PDF_TO_MARKDOWN_SAMPLE_DIR` can still override that root if needed.
 
 ## How to run
 

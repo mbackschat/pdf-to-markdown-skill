@@ -1,0 +1,3 @@
+[submodule "tests/pdf"]
+	path = tests/pdf
+	url = https://github.com/mbackschat/pdf-to-markdown-fixtures.git

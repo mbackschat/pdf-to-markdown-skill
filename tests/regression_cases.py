@@ -7,9 +7,7 @@ import re
 from pathlib import Path
 
 
-DEFAULT_SAMPLE_DIR = Path(
-    "/Volumes/Learning/Retro Literatur/Atari ST/Developer Books/atari-tos-main/doc/additional_material/pdf"
-)
+DEFAULT_SAMPLE_DIR = Path(__file__).resolve().parent / "pdf"
 
 
 def sample_pdf_dir() -> Path:
