@@ -26,26 +26,19 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from pdfmd_models import ConversionContext, MarkdownHeading, OutlineEntry, Region
+from pdfmd_ocr import get_ocr_function, map_lang_codes, resolve_ocr_resolution
 
 DECIMAL_PAGE_RE = r"[A-Za-z]?\d+(?:[.-]\d+)*"
 ROMAN_PAGE_RE = r"M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{1,3})"
 PAGE_MARKER_RE = rf"(?:{DECIMAL_PAGE_RE}|{ROMAN_PAGE_RE})"
-
-
-@dataclass
-class Region:
-    """A layout-aware text region recovered from one PDF page area."""
-
-    page_no: int
-    source_class: str
-    start: int
-    stop: int
-    bbox: tuple[float, float, float, float]
-    snippet: str
-    rows: list[list[dict[str, object]]]
 
 
 def parse_page_range(page_range_str: str) -> tuple[int, int]:
@@ -119,12 +112,11 @@ def cleanup_heading_markup(md_text: str) -> str:
     return "\n".join(cleaned)
 
 
-def fix_headings(md_text: str) -> str:
-    """Fix flat heading hierarchy and remove repeated running headers."""
+def remove_running_headers(md_text: str) -> str:
+    """Remove repeated running headers while leaving heading depth untouched."""
     lines = md_text.split("\n")
     heading_re = re.compile(r"^(#{1,6})\s+(.+)$")
 
-    # Step 1: detect repeated headings, ignoring fenced code blocks.
     in_code = False
     heading_texts: list[str] = []
     for line in lines:
@@ -140,77 +132,16 @@ def fix_headings(md_text: str) -> str:
     counts = Counter(heading_texts)
     running_headers = {text for text, count in counts.items() if count >= 3}
 
-    if running_headers:
-        cleaned: list[str] = []
-        skip_next_blank = False
-        in_code = False
-        for line in lines:
-            if line.startswith("```"):
-                in_code = not in_code
-                skip_next_blank = False
-                cleaned.append(line)
-                continue
-            if in_code:
-                cleaned.append(line)
-                continue
-
-            match = heading_re.match(line)
-            if match and match.group(2).strip() in running_headers:
-                skip_next_blank = True
-                continue
-            if skip_next_blank and line.strip() == "":
-                skip_next_blank = False
-                continue
-            skip_next_blank = False
-            cleaned.append(line)
-        lines = cleaned
-
-    # Step 2: use TOC entries to determine main section headings.
-    toc_entries: set[str] = set()
-    in_toc = False
-    in_code = False
-    for line in lines:
-        if line.startswith("```"):
-            in_code = not in_code
-            continue
-        if in_code:
-            continue
-
-        match = heading_re.match(line)
-        if match:
-            text = match.group(2).strip()
-            if re.search(r"(?i)table of content|inhaltsverzeichnis|contents", text):
-                in_toc = True
-                continue
-            if in_toc:
-                in_toc = False
-
-        if in_toc:
-            toc_match = re.match(r"\|\s*(.+?)\s*\|", line)
-            if toc_match:
-                entry = toc_match.group(1).strip()
-                entry = re.sub(r"[.\s·…]+\d*\s*$", "", entry).strip()
-                entry_no_num = re.sub(r"^\d+(\.\d+)*\.?\s*", "", entry).strip()
-                if entry and len(entry) > 1:
-                    toc_entries.add(entry)
-                if entry_no_num and len(entry_no_num) > 1:
-                    toc_entries.add(entry_no_num)
-            list_match = re.match(r"[-*]\s+(.+)", line)
-            if list_match:
-                entry = list_match.group(1).strip()
-                entry = re.sub(r"[.\s·…]+\d*\s*$", "", entry).strip()
-                if entry and len(entry) > 1:
-                    toc_entries.add(entry)
-
-    if not toc_entries:
+    if not running_headers:
         return "\n".join(lines)
 
-    # Step 3: normalize heading levels, still ignoring fenced code blocks.
     result: list[str] = []
+    skip_next_blank = False
     in_code = False
     for line in lines:
         if line.startswith("```"):
             in_code = not in_code
+            skip_next_blank = False
             result.append(line)
             continue
         if in_code:
@@ -218,50 +149,16 @@ def fix_headings(md_text: str) -> str:
             continue
 
         match = heading_re.match(line)
-        if not match:
-            result.append(line)
+        if match and match.group(2).strip() in running_headers:
+            skip_next_blank = True
             continue
-
-        text = match.group(2).strip()
-        text_clean = re.sub(r"[.:]+$", "", text).strip()
-        if text_clean in toc_entries or text in toc_entries:
-            result.append(f"## {text}")
-        else:
-            result.append(f"### {text}")
+        if skip_next_blank and line.strip() == "":
+            skip_next_blank = False
+            continue
+        skip_next_blank = False
+        result.append(line)
 
     return "\n".join(result)
-
-
-def map_lang_codes(langs: list[str], target: str) -> str:
-    """Map short language codes to backend-specific OCR language labels."""
-    tess_lang_map = {
-        "en": "eng",
-        "de": "deu",
-        "fr": "fra",
-        "es": "spa",
-        "it": "ita",
-        "pt": "por",
-        "nl": "nld",
-        "ja": "jpn",
-        "zh": "chi_sim",
-    }
-    mac_lang_map = {
-        "en": "en-US",
-        "de": "de-DE",
-        "fr": "fr-FR",
-        "es": "es-ES",
-        "it": "it-IT",
-        "pt": "pt-BR",
-        "nl": "nl-NL",
-        "ja": "ja-JP",
-        "zh": "zh-Hans",
-    }
-
-    if target == "mac":
-        return ",".join(mac_lang_map.get(lang, lang) for lang in langs)
-    if target == "tesseract":
-        return "+".join(tess_lang_map.get(lang, lang) for lang in langs)
-    return ",".join(langs)
 
 
 def detect_text_pages(pdf_path: Path, page_numbers: list[int] | None) -> tuple[int, int]:
@@ -282,45 +179,6 @@ def detect_text_pages(pdf_path: Path, page_numbers: list[int] | None) -> tuple[i
         return with_text, without_text
     finally:
         doc.close()
-
-
-def pick_ocr_backend(engine: str) -> str | None:
-    """Choose an installed OCR backend."""
-    if engine == "mac":
-        if sys.platform == "darwin":
-            try:
-                import ocrmac  # noqa: F401
-            except ImportError:
-                return None
-            return "mac"
-        return None
-    if engine == "rapidocr":
-        try:
-            import rapidocr_onnxruntime  # noqa: F401
-        except ImportError:
-            return None
-        return "rapidocr"
-    if engine == "tesseract":
-        try:
-            import pymupdf
-
-            if pymupdf.get_tessdata():
-                return "tesseract"
-        except Exception:
-            return None
-        return None
-    if engine == "auto":
-        if sys.platform == "darwin":
-            backend = pick_ocr_backend("mac")
-            if backend:
-                return backend
-        backend = pick_ocr_backend("rapidocr")
-        if backend:
-            return backend
-        backend = pick_ocr_backend("tesseract")
-        if backend:
-            return backend
-    return None
 
 
 def extract_page_lines_from_bbox_layout(
@@ -435,6 +293,53 @@ def extract_page_lines_from_pymupdf(
     return lines
 
 
+def extract_page_style_lines(
+    pdf_path: Path,
+    page_no: int,
+    style_cache: dict[int, list[dict[str, float | str]]],
+) -> list[dict[str, float | str]]:
+    """Extract positioned lines plus font-size metadata using PyMuPDF text dict output."""
+    cache_key = page_no
+    if cache_key in style_cache:
+        return style_cache[cache_key]
+
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page = doc.load_page(page_no - 1)
+        data = page.get_text("dict")
+    finally:
+        doc.close()
+
+    lines: list[dict[str, float | str]] = []
+    for block in data.get("blocks", []):
+        for line in block.get("lines", []):
+            spans = [span for span in line.get("spans", []) if str(span.get("text", "")).strip()]
+            if not spans:
+                continue
+
+            text = "".join(str(span.get("text", "")) for span in spans).strip()
+            if not text:
+                continue
+
+            bbox = line.get("bbox", (0, 0, 0, 0))
+            lines.append(
+                {
+                    "x0": float(bbox[0]),
+                    "y0": float(bbox[1]),
+                    "x1": float(bbox[2]),
+                    "y1": float(bbox[3]),
+                    "text": text,
+                    "size": max(float(span.get("size", 0.0)) for span in spans),
+                    "flags": max(int(span.get("flags", 0)) for span in spans),
+                }
+            )
+
+    style_cache[cache_key] = lines
+    return lines
+
+
 def extract_page_line_infos(
     pdf_path: Path,
     page_no: int,
@@ -465,30 +370,6 @@ def line_overlaps_box(line: dict[str, float | str], box: list[int]) -> bool:
     overlap_x = max(0.0, min(x1, line_x1) - max(x0, line_x0))
     line_width = max(1.0, line_x1 - line_x0)
     return overlap_x / line_width >= 0.35
-
-
-def recover_box_lines(
-    pdf_path: Path,
-    page_no: int,
-    box: list[int],
-    xml_cache: dict[int, list[dict[str, float | str]]],
-) -> list[str]:
-    """Recover text lines for a page box using layout coordinates."""
-    try:
-        lines = extract_page_line_infos(pdf_path, page_no, xml_cache)
-    except Exception:
-        return []
-
-    selected = [line for line in lines if line_overlaps_box(line, box)]
-    if not selected:
-        return []
-
-    box_left = box[0]
-    recovered: list[str] = []
-    for line in selected:
-        indent = max(0, int(round((float(line["x0"]) - box_left) / 6.0)))
-        recovered.append((" " * min(indent, 20)) + str(line["text"]).rstrip())
-    return recovered
 
 
 def recover_box_line_infos(
@@ -905,53 +786,6 @@ def can_group_preformatted_regions(left: Region, right: Region, separator: str) 
     )
 
 
-def looks_like_preformatted(snippet: str, recovered_lines: list[str], box: list[int]) -> bool:
-    """Heuristic for deciding whether recovered lines are preformatted text."""
-    lines = [line.rstrip() for line in recovered_lines if line.strip()]
-    joined = " ".join(lines)
-    if not lines:
-        return False
-
-    shortish_lines = max(len(line) for line in lines) <= 100
-    sentence_like = sum(line.endswith((".", "!", "?")) for line in lines)
-    proseish_lines = sum(1 for line in lines if len(line.split()) >= 10 and line.endswith((".", "!", "?")))
-    avg_words = sum(len(line.split()) for line in lines) / max(1, len(lines))
-    indented_lines = sum(1 for line in lines[1:] if line.startswith(" "))
-    punctuation_lines = sum(1 for line in lines if re.search(r"[{}[\]<>:=;/\\|()]", line))
-    delimiter_lines = sum(1 for line in lines if re.search(r"[_./\\-]", line))
-    symbol_count = sum(joined.count(char) for char in "{}[]<>=();:/\\|")
-
-    if len(lines) == 1:
-        return shortish_lines and avg_words <= 6 and punctuation_lines >= 1 and symbol_count >= 3
-
-    if (
-        shortish_lines
-        and proseish_lines <= 1
-        and sentence_like <= 1
-        and avg_words <= 8
-        and (indented_lines >= 1 or punctuation_lines >= 2 or delimiter_lines >= 2)
-    ):
-        return True
-    if (
-        shortish_lines
-        and symbol_count >= 4
-        and proseish_lines == 0
-        and avg_words <= 6
-        and (punctuation_lines >= 1 or indented_lines >= 1)
-    ):
-        return True
-
-    snippet_norm = normalize_whitespace(snippet)
-    recovered_norm = normalize_whitespace("\n".join(lines))
-    return (
-        shortish_lines
-        and punctuation_lines >= 1
-        and proseish_lines <= 1
-        and avg_words <= 6
-        and snippet_norm == recovered_norm
-    )
-
-
 def restore_code_blocks_in_chunk(
     page_text: str,
     page_boxes: list[dict],
@@ -1088,17 +922,6 @@ def restore_code_blocks_in_chunk(
                 replacements.append((start, stop, "code", f"\n\n```\n{body}\n```\n\n"))
                 continue
 
-        recovered_lines = recover_box_lines(pdf_path, page_no, box_info["bbox"], xml_cache)
-        recovered_text = "\n".join(recovered_lines).strip("\n")
-        if not recovered_text:
-            continue
-        if normalize_whitespace(snippet) != normalize_whitespace(recovered_text):
-            continue
-        if not looks_like_preformatted(snippet, recovered_lines, box_info["bbox"]):
-            continue
-
-        replacements.append((start, stop, "code", f"\n\n```\n{recovered_text}\n```\n\n"))
-
     if not replacements:
         return page_text
 
@@ -1196,11 +1019,12 @@ def looks_like_contents_heading(text: str) -> bool:
 def sanitize_contents_entry(text: str) -> str:
     """Clean visible TOC entry text before matching or rendering."""
     text = strip_markdown_inline(text)
+    text = re.sub(r"[‐‑‒–—―]+", "-", text)
     text = re.sub(rf"\s*\({PAGE_MARKER_RE}\)\s*$", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\.{2,}", " ", text)
     text = re.sub(r"[•·]+", " ", text)
     text = normalize_inline_spacing(text)
-    text = text.strip(" -.:;")
+    text = text.strip(" -.:;[](){}")
     return text
 
 
@@ -1216,19 +1040,28 @@ def slugify_heading(text: str) -> str:
 def heading_match_keys(text: str) -> list[str]:
     """Generate matching keys for headings and TOC entries."""
     text = sanitize_contents_entry(text)
-    stripped_number = re.sub(r"^\d+(?:\.\d+)*\s+", "", text)
+    stripped_number = re.sub(r"^(?:[A-Z]\.)?\d+(?:\.\d+)*[:.)-]?\s*", "", text)
+    stripped_chapter = re.sub(r"^(?:chapter|appendix)\s+[A-Z0-9]+[:.)-]?\s*", "", stripped_number, flags=re.IGNORECASE)
     keys = {text.lower()}
     if stripped_number != text:
         keys.add(stripped_number.lower())
+    if stripped_chapter != stripped_number:
+        keys.add(stripped_chapter.lower())
 
-    compact = re.sub(r"[^a-z0-9]+", "", stripped_number.lower())
-    if compact:
-        keys.add(compact)
+    for variant in {text.lower(), stripped_number.lower(), stripped_chapter.lower()}:
+        compact = re.sub(r"[^a-z0-9]+", "", variant)
+        if compact:
+            keys.add(compact)
 
-    no_apostrophes = stripped_number.lower().replace("'", "").replace("’", "")
-    if no_apostrophes:
-        keys.add(no_apostrophes)
-        compact_no_apostrophes = re.sub(r"[^a-z0-9]+", "", no_apostrophes)
+    no_apostrophes = {
+        variant.replace("'", "").replace("’", "")
+        for variant in {text.lower(), stripped_number.lower(), stripped_chapter.lower()}
+        if variant
+    }
+    for variant in no_apostrophes:
+        if variant:
+            keys.add(variant)
+        compact_no_apostrophes = re.sub(r"[^a-z0-9]+", "", variant)
         if compact_no_apostrophes:
             keys.add(compact_no_apostrophes)
 
@@ -1697,137 +1530,606 @@ def expand_contents_paragraphs(md_text: str) -> str:
     return "\n".join(result)
 
 
-def link_contents_entries(md_text: str) -> str:
-    """Convert contents bullets into internal markdown links when headings exist."""
+def extract_pdf_outline(pdf_path: Path, page_numbers: list[int] | None = None) -> list[OutlineEntry]:
+    """Read the PDF outline/bookmark tree, optionally filtered to selected pages."""
+    import pymupdf
+
+    selected_pages = {page + 1 for page in page_numbers} if page_numbers is not None else None
+    doc = pymupdf.open(str(pdf_path))
+    outline = doc.get_toc()
+    entries: list[OutlineEntry] = []
+
+    for level, title, page in outline:
+        cleaned_title = sanitize_contents_entry(title)
+        if not cleaned_title or looks_like_contents_heading(cleaned_title):
+            continue
+        if selected_pages is not None and page not in selected_pages:
+            continue
+        entries.append(OutlineEntry(level=level, title=cleaned_title, page=page))
+
+    return entries
+
+
+def get_cached_outline(context: ConversionContext) -> list[OutlineEntry]:
+    """Return the cached PDF outline for this conversion context."""
+    if context.outline is None:
+        context.outline = extract_pdf_outline(context.pdf_path, context.page_numbers)
+    return context.outline
+
+
+def parse_contents_page_title_and_page(text: str) -> tuple[str, int]:
+    """Split a visible TOC line into a title and optional page number."""
+    stripped = strip_markdown_inline(text).replace("…", ".")
+    match = re.search(
+        rf"(.+?)(?:\s*[.\u2026]{{2,}}\s*|\s+)(?<![\w/])({PAGE_MARKER_RE})(?![\w/])\s*$",
+        stripped,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        title = sanitize_contents_entry(match.group(1))
+        page_text = match.group(2)
+        try:
+            page = int(page_text)
+        except ValueError:
+            page = 0
+        return title, page
+
+    return sanitize_contents_entry(stripped), 0
+
+
+def cluster_indent_levels(x_positions: list[float], tolerance: float = 8.0) -> list[float]:
+    """Cluster nearby x positions into indentation bands."""
+    if not x_positions:
+        return []
+
+    clusters: list[float] = []
+    for x in sorted(x_positions):
+        if not clusters or abs(x - clusters[-1]) > tolerance:
+            clusters.append(x)
+        else:
+            clusters[-1] = (clusters[-1] + x) / 2.0
+    return clusters
+
+
+def looks_like_toc_title_only_line(text: str) -> bool:
+    """Return True for short title-like TOC lines without explicit page markers."""
+    if text.rstrip().endswith((".", "!", "?")):
+        return False
+    cleaned = sanitize_contents_entry(text)
+    if not cleaned:
+        return False
+    if len(cleaned.split()) > 12:
+        return False
+    if len(cleaned) > 90:
+        return False
+    if cleaned.endswith((".", "!", "?")):
+        return False
+    return bool(re.search(r"[A-Za-z]", cleaned))
+
+
+def extract_contents_outline_from_pdf(
+    pdf_path: Path,
+    page_numbers: list[int] | None = None,
+    style_cache: dict[int, list[dict[str, float | str]]] | None = None,
+) -> list[OutlineEntry]:
+    """Extract a best-effort outline from visible contents pages using source layout."""
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        total_pages = doc.page_count
+    finally:
+        doc.close()
+
+    selected_pages = [page + 1 for page in page_numbers] if page_numbers is not None else list(range(1, total_pages + 1))
+    if style_cache is None:
+        style_cache = {}
+    entries_by_page: list[tuple[int, list[dict[str, float | str]]]] = []
+    in_contents_run = False
+
+    for page_no in selected_pages:
+        lines = extract_page_style_lines(pdf_path, page_no, style_cache)
+        heading_idx = next(
+            (idx for idx, line in enumerate(lines) if looks_like_contents_heading(str(line["text"]))),
+            None,
+        )
+
+        start_idx = 0
+        if heading_idx is not None:
+            in_contents_run = True
+            start_idx = heading_idx + 1
+        elif not in_contents_run:
+            continue
+
+        page_entries: list[dict[str, float | str]] = []
+        for line in lines[start_idx:]:
+            text = str(line["text"]).strip()
+            if not text:
+                continue
+
+            if looks_like_contents_heading(text):
+                continue
+
+            title, page = parse_contents_page_title_and_page(text)
+            has_leader = bool(re.search(r"[.\u2026]{4,}", text))
+            if not title:
+                continue
+            if looks_like_contents_heading(title):
+                continue
+
+            if not has_leader and page == 0:
+                aligned_with_existing = (
+                    bool(page_entries)
+                    and any(abs(float(line["x0"]) - float(entry["x0"])) <= 12 for entry in page_entries)
+                )
+                if not (aligned_with_existing and looks_like_toc_title_only_line(title)):
+                    if page_entries:
+                        break
+                    continue
+
+            page_entries.append(
+                {
+                    "x0": float(line["x0"]),
+                    "title": title,
+                    "page": page,
+                }
+            )
+
+        if page_entries:
+            entries_by_page.append((page_no, page_entries))
+            continue
+
+        if in_contents_run:
+            break
+
+    if not entries_by_page:
+        return []
+
+    x_positions = [float(entry["x0"]) for _page_no, page_entries in entries_by_page for entry in page_entries]
+    indent_bands = cluster_indent_levels(x_positions)
+    if not indent_bands:
+        return []
+
+    entries: list[OutlineEntry] = []
+    seen: set[tuple[int, str]] = set()
+    for _page_no, page_entries in entries_by_page:
+        for entry in page_entries:
+            x0 = float(entry["x0"])
+            band_idx = min(range(len(indent_bands)), key=lambda idx: abs(x0 - indent_bands[idx]))
+            level = band_idx + 1
+            title = str(entry["title"])
+            key = (level, title.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(OutlineEntry(level=level, title=title, page=int(entry["page"])))
+
+    return entries
+
+
+def infer_contents_entry_level(text: str, previous_level: int | None = None) -> int:
+    """Infer a structural level for a visible TOC entry."""
+    cleaned = sanitize_contents_entry(text)
+    lower = cleaned.lower()
+
+    if re.match(r"^(chapter|appendix)\b", cleaned, re.IGNORECASE):
+        return 1
+    if lower in {"foreword", "forward", "preface", "introduction", "bibliography", "index"}:
+        return 1
+
+    match = re.match(r"^(?:([A-Z])\.)?(\d+(?:\.\d+)*)\b", cleaned)
+    if match:
+        appendix_prefix = 1 if match.group(1) else 0
+        return len(match.group(2).split(".")) + appendix_prefix
+
+    if previous_level == 1:
+        return 2
+    if previous_level is not None:
+        return previous_level
+    return 1
+
+
+def extract_contents_outline_from_markdown(md_text: str) -> list[OutlineEntry]:
+    """Extract a best-effort internal outline from a visible Markdown contents section."""
     lines = md_text.splitlines()
     heading_re = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
-
-    anchor_map: dict[str, str] = {}
-    for line in lines:
-        match = heading_re.match(line)
-        if not match:
-            continue
-        heading_text = strip_markdown_inline(match.group(2))
-        if looks_like_contents_heading(heading_text):
-            continue
-        slug = slugify_heading(heading_text)
-        if not slug:
-            continue
-        for key in heading_match_keys(heading_text):
-            anchor_map.setdefault(key, slug)
-
-    result: list[str] = []
+    entries: list[OutlineEntry] = []
     in_contents = False
+    previous_level: int | None = None
+    seen: set[tuple[int, str]] = set()
 
     for line in lines:
         match = heading_re.match(line)
         if match:
             heading_text = strip_markdown_inline(match.group(2))
-            in_contents = looks_like_contents_heading(heading_text)
-            result.append(line)
-            continue
-
-        if not in_contents or not line.lstrip().startswith("- "):
-            result.append(line)
-            continue
-
-        entry = sanitize_contents_entry(line.lstrip()[2:].strip())
-        if not entry:
-            continue
-        if looks_like_contents_heading(entry):
-            continue
-
-        slug = None
-        for key in heading_match_keys(entry):
-            if key in anchor_map:
-                slug = anchor_map[key]
+            if looks_like_contents_heading(heading_text):
+                in_contents = True
+                previous_level = None
+                continue
+            if in_contents:
                 break
 
-        if slug:
-            result.append(f"- [{entry}](#{slug})")
+        if not in_contents:
+            continue
+
+        bullet_match = re.match(r"^(\s*)-\s+(.+?)\s*$", line)
+        if not bullet_match:
+            continue
+
+        indent, raw_text = bullet_match.groups()
+        text = sanitize_contents_entry(raw_text)
+        if not text or looks_like_contents_heading(text):
+            continue
+
+        indent_level = len(indent) // 2 + 1 if indent else None
+        level = indent_level or infer_contents_entry_level(text, previous_level)
+        key = (level, text.lower())
+        if key in seen:
+            continue
+
+        entries.append(OutlineEntry(level=level, title=text, page=0))
+        seen.add(key)
+        previous_level = level
+
+    return entries
+
+
+def extract_markdown_headings(md_text: str) -> list[MarkdownHeading]:
+    """Extract headings from generated Markdown while ignoring fenced code blocks."""
+    heading_re = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+    headings: list[MarkdownHeading] = []
+    lines = md_text.splitlines()
+    in_code = False
+
+    for line_idx, line in enumerate(lines):
+        if line.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+
+        match = heading_re.match(line)
+        if not match:
+            continue
+
+        heading_text = strip_markdown_inline(match.group(2))
+        if looks_like_contents_heading(heading_text):
+            continue
+
+        slug = slugify_heading(heading_text)
+        if not slug:
+            continue
+
+        headings.append(
+            MarkdownHeading(
+                line_idx=line_idx,
+                text=heading_text,
+                keys=heading_match_keys(heading_text),
+                slug=slug,
+                original_level=len(match.group(1)),
+            )
+        )
+
+    return headings
+
+
+def normalized_heading_token(text: str) -> str:
+    """Normalize heading text to a compact token for order-preserving source matching."""
+    return re.sub(r"[^a-z0-9]+", "", sanitize_contents_entry(text).lower())
+
+
+def match_headings_to_source_lines(
+    headings: list[MarkdownHeading],
+    pdf_path: Path,
+    page_numbers: list[int] | None = None,
+    style_cache: dict[int, list[dict[str, float | str]]] | None = None,
+) -> dict[int, dict[str, float | str]]:
+    """Match markdown headings to styled PDF lines in document order."""
+    if not headings:
+        return {}
+
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page_count = doc.page_count
+    finally:
+        doc.close()
+
+    selected_pages = [page + 1 for page in page_numbers] if page_numbers is not None else list(range(1, page_count + 1))
+    if style_cache is None:
+        style_cache = {}
+    source_lines: list[dict[str, float | str]] = []
+
+    for page_no in selected_pages:
+        for line in extract_page_style_lines(pdf_path, page_no, style_cache):
+            token = normalized_heading_token(str(line["text"]))
+            if not token:
+                continue
+            source_lines.append(
+                {
+                    **line,
+                    "page_no": page_no,
+                    "token": token,
+                }
+            )
+
+    matches: dict[int, dict[str, float | str]] = {}
+    source_idx = 0
+    for heading_idx, heading in enumerate(headings):
+        heading_tokens = {normalized_heading_token(heading.text)}
+        heading_tokens.update(normalized_heading_token(key) for key in heading.keys)
+        heading_tokens.discard("")
+        if not heading_tokens:
+            continue
+
+        for candidate_idx in range(source_idx, len(source_lines)):
+            token = str(source_lines[candidate_idx]["token"])
+            if token in heading_tokens:
+                matches[heading_idx] = source_lines[candidate_idx]
+                source_idx = candidate_idx + 1
+                break
+
+    return matches
+
+
+def map_outline_to_headings(
+    outline: list[OutlineEntry], headings: list[MarkdownHeading]
+) -> dict[int, OutlineEntry]:
+    """Map outline entries to markdown headings in document order."""
+    if not outline or not headings:
+        return {}
+
+    candidates_by_key: dict[str, list[int]] = {}
+    for idx, heading in enumerate(headings):
+        for key in heading.keys:
+            candidates_by_key.setdefault(key, []).append(idx)
+
+    matches: dict[int, OutlineEntry] = {}
+    last_heading_idx = -1
+
+    for entry in outline:
+        chosen_idx: int | None = None
+        chosen_score: tuple[int, int] | None = None
+        entry_clean = sanitize_contents_entry(entry.title)
+        entry_is_chapterish = bool(re.match(r"^(chapter|appendix)\b", entry_clean, re.IGNORECASE))
+        entry_is_dotted = bool(re.match(r"^(?:[A-Z]\.)?\d+(?:\.\d+)+\b", entry_clean))
+
+        for key in heading_match_keys(entry.title):
+            for candidate_idx in candidates_by_key.get(key, []):
+                if candidate_idx <= last_heading_idx:
+                    continue
+
+                heading = headings[candidate_idx]
+                heading_clean = sanitize_contents_entry(heading.text)
+                heading_is_chapterish = bool(
+                    re.match(r"^(chapter|appendix)\b", heading_clean, re.IGNORECASE)
+                )
+                heading_is_dotted = bool(re.match(r"^(?:[A-Z]\.)?\d+(?:\.\d+)+\b", heading_clean))
+
+                score = 0
+                if entry_is_chapterish and heading_is_chapterish:
+                    score += 4
+                elif entry_is_chapterish != heading_is_chapterish:
+                    score -= 4
+
+                if entry_is_dotted and heading_is_dotted:
+                    score += 2
+
+                if heading_clean.lower() == entry_clean.lower():
+                    score += 1
+
+                candidate_score = (score, -candidate_idx)
+                if chosen_score is None or candidate_score > chosen_score:
+                    chosen_idx = candidate_idx
+                    chosen_score = candidate_score
+
+            if chosen_idx is not None and chosen_score is not None and chosen_score[0] >= 4:
+                break
+
+        if chosen_idx is None:
+            continue
+
+        entry.slug = headings[chosen_idx].slug
+        matches[chosen_idx] = entry
+        last_heading_idx = chosen_idx
+
+    return matches
+
+
+def infer_heading_rank(text: str, original_level: int) -> int:
+    """Infer a generic structural rank from numbering and broad heading conventions."""
+    cleaned = sanitize_contents_entry(strip_markdown_inline(text)).strip()
+    lower = cleaned.lower()
+
+    if re.match(r"^(chapter|appendix)\b", lower):
+        return 1
+    if lower in {"foreword", "forward", "preface", "introduction", "bibliography", "index"}:
+        return 1
+
+    appendix_num = re.match(r"^[A-Z]\.(\d+(?:\.\d+)*)\b", cleaned)
+    if appendix_num:
+        return len(appendix_num.group(1).split(".")) + 1
+
+    dotted_num = re.match(r"^\d+(?:\.\d+)+\b", cleaned)
+    if dotted_num:
+        return len(dotted_num.group(0).split("."))
+
+    return max(1, original_level - 1)
+
+
+def apply_visual_heading_levels(
+    md_text: str,
+    pdf_path: Path,
+    page_numbers: list[int] | None = None,
+    style_cache: dict[int, list[dict[str, float | str]]] | None = None,
+) -> str:
+    """Rebuild heading levels from source typography when no outline is available."""
+    headings = extract_markdown_headings(md_text)
+    if not headings:
+        return md_text
+
+    source_matches = match_headings_to_source_lines(
+        headings,
+        pdf_path,
+        page_numbers,
+        style_cache=style_cache,
+    )
+    if not source_matches:
+        return md_text
+
+    raw_sizes = sorted(
+        {
+            float(match["size"])
+            for match in source_matches.values()
+            if float(match.get("size", 0.0)) > 0
+        },
+        reverse=True,
+    )
+    if not raw_sizes:
+        return md_text
+
+    size_buckets: list[float] = []
+    for size in raw_sizes:
+        if not size_buckets or abs(size - size_buckets[-1]) >= 1.5:
+            size_buckets.append(size)
+
+    size_to_level = {
+        int(round(size)): min(4, 2 + idx)
+        for idx, size in enumerate(size_buckets)
+    }
+    lines = md_text.splitlines()
+
+    for heading_idx, heading in enumerate(headings):
+        source_match = source_matches.get(heading_idx)
+        if not source_match:
+            continue
+
+        size = int(round(float(source_match.get("size", 0.0))))
+        visual_level = size_to_level.get(size)
+        if visual_level is None:
+            continue
+
+        explicit_rank = infer_heading_rank(heading.text, 1)
+        has_explicit_structure = explicit_rank > 1 or bool(
+            re.match(r"^(chapter|appendix)\b", sanitize_contents_entry(heading.text), re.IGNORECASE)
+        )
+        if has_explicit_structure:
+            inferred_level = min(6, 2 + max(0, explicit_rank - 1))
+            final_level = min(visual_level, inferred_level)
         else:
-            result.append(f"- {entry}")
+            final_level = min(visual_level, max(2, heading.original_level))
+
+        lines[heading.line_idx] = f"{'#' * final_level} {heading.text}"
+
+    return "\n".join(lines)
+
+
+def apply_contents_heading_levels(
+    md_text: str,
+    contents_outline: list[OutlineEntry],
+) -> str:
+    """Rewrite heading levels from a visible text TOC when no embedded outline exists."""
+    if not contents_outline:
+        return md_text
+
+    headings = extract_markdown_headings(md_text)
+    matches = map_outline_to_headings(contents_outline, headings)
+    if not matches:
+        return md_text
+
+    lines = md_text.splitlines()
+    current_level: int | None = None
+
+    for idx, heading in enumerate(headings):
+        inferred_md_level = min(6, 2 + max(0, infer_heading_rank(heading.text, heading.original_level) - 1))
+
+        if idx in matches:
+            current_level = min(6, 2 + max(0, matches[idx].level - 1))
+            lines[heading.line_idx] = f"{'#' * current_level} {heading.text}"
+            continue
+
+        if current_level is None:
+            lines[heading.line_idx] = f"{'#' * inferred_md_level} {heading.text}"
+            continue
+
+        lines[heading.line_idx] = f"{'#' * max(inferred_md_level, min(6, current_level + 1))} {heading.text}"
+
+    return "\n".join(lines)
+
+
+def apply_outline_heading_levels(md_text: str, outline: list[OutlineEntry]) -> str:
+    """Rewrite Markdown heading levels from the PDF outline when available."""
+    if not outline:
+        return md_text
+
+    lines = md_text.splitlines()
+    headings = extract_markdown_headings(md_text)
+    matches = map_outline_to_headings(outline, headings)
+    if not matches:
+        return md_text
+
+    root_level = min(entry.level for entry in outline)
+    base_md_level = 2
+
+    current_matched_level: int | None = None
+    for idx, heading in enumerate(headings):
+        line_idx = heading.line_idx
+        text = heading.text
+        inferred_md_level = min(6, base_md_level + max(0, infer_heading_rank(text, heading.original_level) - 1))
+
+        if idx in matches:
+            outline_md_level = base_md_level + max(0, matches[idx].level - root_level)
+            current_matched_level = min(6, max(outline_md_level, inferred_md_level))
+            lines[line_idx] = f"{'#' * current_matched_level} {text}"
+            continue
+
+        if current_matched_level is None:
+            lines[line_idx] = f"{'#' * inferred_md_level} {text}"
+            continue
+
+        lines[line_idx] = f"{'#' * max(inferred_md_level, min(6, current_matched_level + 1))} {text}"
+
+    return "\n".join(lines)
+
+
+def strip_contents_sections(md_text: str) -> str:
+    """Remove visible contents sections; the heading hierarchy is the primary navigation."""
+    lines = md_text.splitlines()
+    heading_re = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+    result: list[str] = []
+    i = 0
+
+    while i < len(lines):
+        match = heading_re.match(lines[i])
+        if not match:
+            result.append(lines[i])
+            i += 1
+            continue
+
+        heading_text = strip_markdown_inline(match.group(2))
+        if not looks_like_contents_heading(heading_text):
+            result.append(lines[i])
+            i += 1
+            continue
+
+        i += 1
+        while i < len(lines):
+            next_match = heading_re.match(lines[i])
+            if next_match and not looks_like_contents_heading(strip_markdown_inline(next_match.group(2))):
+                break
+            i += 1
+
+        if result and result[-1] != "":
+            result.append("")
 
     return "\n".join(result)
 
 
-def get_ocr_function(backend: str | None, langs: list[str]):
-    """Return an OCR callback compatible with PyMuPDF4LLM."""
-    if backend == "mac":
-        return build_ocrmac_function(langs)
-    if backend == "rapidocr":
-        from pymupdf4llm.ocr import rapidocr_api
-
-        return rapidocr_api.exec_ocr
-    if backend == "tesseract":
-        from pymupdf4llm.ocr import tesseract_api
-
-        return tesseract_api.exec_ocr
-    return None
-
-
-def build_ocrmac_function(langs: list[str]):
-    """Build a PyMuPDF4LLM OCR adapter backed by Apple Vision."""
-    import pymupdf
-    from PIL import Image
-    from ocrmac.ocrmac import text_from_image
-
-    font = pymupdf.Font("helv")
-    fontname = "F0"
-
-    def adjust_width(text: str, fontsize: float, rect: pymupdf.Rect) -> pymupdf.Matrix:
-        width = font.text_length(text, fontsize)
-        return pymupdf.Matrix(rect.width / width, 1) if width > 0 else pymupdf.Matrix(1, 1)
-
-    def exec_ocr(page, dpi=300, pixmap=None, language="eng", keep_ocr_text=False):
-        if pixmap is None:
-            pixmap = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB, alpha=False)
-
-        image = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
-        preferred_languages = [lang for lang in map_lang_codes(langs, "mac").split(",") if lang]
-        results = text_from_image(
-            image,
-            recognition_level="accurate",
-            language_preference=preferred_languages or None,
-            confidence_threshold=0.15,
-            detail=True,
-        )
-
-        if not results:
-            return
-
-        page.insert_font(fontname=fontname, fontbuffer=font.buffer)
-        matrix = pymupdf.Rect(pixmap.irect).torect(page.rect)
-
-        for text, confidence, bbox in results:
-            if not text or not text.strip():
-                continue
-
-            x, y, width, height = bbox
-            rect = pymupdf.Rect(
-                x * pixmap.width,
-                (1.0 - (y + height)) * pixmap.height,
-                (x + width) * pixmap.width,
-                (1.0 - y) * pixmap.height,
-            ) * matrix
-
-            fontsize = max(rect.height, 6)
-            mat = adjust_width(text, fontsize, rect)
-            page.insert_text(
-                rect.bl + (0, -0.15 * fontsize),
-                text,
-                fontsize=fontsize,
-                fontname=fontname,
-                render_mode=0,
-                morph=(rect.bl, mat),
-            )
-
-    return exec_ocr
 
 
 def extract_markdown(
-    pdf_path: Path,
-    page_numbers: list[int] | None,
+    context: ConversionContext,
     force_ocr: bool,
     backend: str | None,
     langs: list[str],
@@ -1835,6 +2137,9 @@ def extract_markdown(
 ) -> tuple[str, Path]:
     """Extract Markdown from a PDF using PyMuPDF4LLM and optional OCR preprocessing."""
     import pymupdf4llm
+
+    pdf_path = context.pdf_path
+    page_numbers = context.page_numbers
 
     with tempfile.TemporaryDirectory(prefix=f"{sanitize_stem(pdf_path.stem)}_images_") as tmp_dir:
         extraction_images_dir = Path(tmp_dir)
@@ -1853,12 +2158,17 @@ def extract_markdown(
             show_progress=False,
         )
 
-        xml_cache: dict[int, list[dict[str, float | str]]] = {}
         page_texts: list[str] = []
         for chunk in chunks:
             page_no = int(chunk["metadata"]["page_number"])
             page_text = chunk["text"]
-            page_text = restore_code_blocks_in_chunk(page_text, chunk["page_boxes"], pdf_path, page_no, xml_cache)
+            page_text = restore_code_blocks_in_chunk(
+                page_text,
+                chunk["page_boxes"],
+                pdf_path,
+                page_no,
+                context.geometry_cache,
+            )
             page_texts.append(page_text.strip())
 
         for src in extraction_images_dir.iterdir():
@@ -1876,24 +2186,49 @@ def extract_markdown(
 
 def cleanup_markdown(
     md_text: str,
-    pdf_path: Path,
+    context: ConversionContext,
     images_dir: Path,
     output_path: Path,
     source_images_dir: Path | None = None,
 ) -> str:
     """Apply markdown cleanup after extraction."""
+    pdf_path = context.pdf_path
+    page_numbers = context.page_numbers
+
     md_text = cleanup_heading_markup(md_text)
-    md_text = fix_headings(md_text)
-    md_text = remove_redundant_page_title_headings(md_text)
+    md_text = remove_running_headers(md_text)
     md_text = convert_contents_tables_to_lists(md_text)
+    md_text = expand_contents_paragraphs(md_text)
+
+    pdf_outline = get_cached_outline(context)
+    if pdf_outline:
+        md_text = apply_outline_heading_levels(md_text, pdf_outline)
+    else:
+        contents_outline = extract_contents_outline_from_pdf(
+            pdf_path,
+            page_numbers,
+            style_cache=context.style_cache,
+        )
+        if not contents_outline:
+            contents_outline = extract_contents_outline_from_markdown(md_text)
+        if contents_outline:
+            md_text = apply_contents_heading_levels(md_text, contents_outline)
+        else:
+            md_text = apply_visual_heading_levels(
+                md_text,
+                pdf_path,
+                page_numbers,
+                style_cache=context.style_cache,
+            )
+
+    md_text = remove_redundant_page_title_headings(md_text)
     md_text = clean_markdown_tables(md_text)
     md_text = fix_definition_bullets(md_text)
     md_text = normalize_prose_lines(md_text)
     md_text = split_option_bullet_runs(md_text)
     md_text = split_inline_bullet_runs(md_text)
     md_text = dedupe_adjacent_bullets(md_text)
-    md_text = expand_contents_paragraphs(md_text)
-    md_text = link_contents_entries(md_text)
+    md_text = strip_contents_sections(md_text)
     md_text = merge_adjacent_fenced_blocks(md_text)
     md_text = make_image_refs_relative(
         md_text,
@@ -1921,6 +2256,11 @@ def main() -> None:
         "--scan",
         action="store_true",
         help="Force OCR for scanned PDFs or broken text layers",
+    )
+    parser.add_argument(
+        "--auto-ocr",
+        action="store_true",
+        help="Auto-enable OCR only when selected pages are image-only",
     )
     parser.add_argument(
         "--ocr-engine",
@@ -1979,10 +2319,20 @@ def main() -> None:
                 doc.close()
 
         with_text, without_text = detect_text_pages(pdf_path, page_numbers)
-        needs_ocr = args.ocr or without_text > 0
-        backend = pick_ocr_backend(args.ocr_engine) if needs_ocr else None
+        context = ConversionContext(
+            pdf_path=pdf_path,
+            page_numbers=page_numbers,
+            with_text=with_text,
+            without_text=without_text,
+        )
+        ocr_resolution = resolve_ocr_resolution(
+            force_ocr_requested=args.ocr,
+            auto_ocr_requested=args.auto_ocr,
+            image_only_pages=without_text,
+            engine=args.ocr_engine,
+        )
 
-        if needs_ocr and backend is None:
+        if ocr_resolution.enabled and ocr_resolution.backend is None:
             print(f"Error: OCR is required for {pdf_path.name}, but no OCR backend is installed.")
             print("Available backends for this skill are Apple Vision (ocrmac), RapidOCR, or Tesseract.")
             sys.exit(1)
@@ -2006,7 +2356,9 @@ def main() -> None:
         print(f"  Text pages:    {with_text}")
         print(f"  Image-only pages: {without_text}")
         print(f"  OCR requested: {args.ocr}")
-        print(f"  OCR backend:   {backend or 'disabled'}")
+        print(f"  Auto OCR:      {args.auto_ocr}")
+        print(f"  OCR active:    {ocr_resolution.enabled}")
+        print(f"  OCR backend:   {ocr_resolution.backend or 'disabled'}")
 
         start_time = time.time()
         print("\nConverting...", flush=True)
@@ -2015,10 +2367,9 @@ def main() -> None:
 
         try:
             md_text, extracted_images_dir = extract_markdown(
-                pdf_path=pdf_path,
-                page_numbers=page_numbers,
-                force_ocr=args.ocr,
-                backend=backend,
+                context=context,
+                force_ocr=ocr_resolution.force_ocr,
+                backend=ocr_resolution.backend,
                 langs=langs,
                 images_dir=images_dir,
             )
@@ -2032,7 +2383,7 @@ def main() -> None:
         print("  Post-processing markdown...")
         md_text = cleanup_markdown(
             md_text,
-            pdf_path,
+            context,
             images_dir,
             output_path,
             source_images_dir=extracted_images_dir,

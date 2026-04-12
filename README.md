@@ -2,15 +2,19 @@
 
 A [Claude Code skill](https://code.claude.com/docs/en/skills.md) that converts PDF files to Markdown with a digital-first pipeline based on [PyMuPDF4LLM](https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/). It is optimized for technical documentation such as datasheets, hardware manuals, and programming guides with tables, diagrams, and code listings.
 
+The current implementation is documented in more depth in [CONVERSION-DETAILS.md](./CONVERSION-DETAILS.md). A findings-first review of the Python script lives in [CODE_REVIEW.md](./CODE_REVIEW.md).
+
 ## Features
 
 - **Digital-first extraction** -- born-digital PDFs are handled by PyMuPDF4LLM for better native structure recovery
-- **OCR support** -- opt-in OCR with `--ocr` or `--scan` for scanned documents; digital PDFs work out of the box
+- **OCR support** -- `--ocr` / `--scan` forces OCR for scanned documents, and `--auto-ocr` opt-in enables OCR only for image-only pages
 - **Best-default OCR backend** -- Apple Vision via `ocrmac` on macOS, RapidOCR elsewhere, with Tesseract as an explicit fallback
 - **Batch mode** -- pass a folder to convert all PDFs in one go
 - **Image extraction** -- diagrams and figures exported as PNGs, referenced inline in the Markdown
-- **Smart heading fix-up** -- detects and removes running headers; uses the document's Table of Contents to restore proper heading hierarchy
-- **TOC link conversion** -- contents pages are rewritten as clean bullet lists and linked to generated Markdown headings when possible
+- **Smart heading fix-up** -- detects and removes running headers; rebuilds heading hierarchy from the strongest available structural source
+- **Layered heading reconstruction** -- prefers embedded PDF outlines, then visible TOC pages parsed from PDF layout, then visible contents recovered from Markdown, then page-typography cues for `##` / `###` / `####` nesting
+- **Contents stripping** -- visible contents pages are removed from the Markdown output because Markdown readers already expose heading navigation
+- **Visible TOC as structure data** -- contents pages are primarily used internally to repair heading nesting rather than preserved as final output
 - **Table extraction** -- register maps, pin tables, etc. rendered as proper Markdown tables
 - **Region-based structure recovery** -- positioned page text is grouped into structural regions before rendering
 - **Language-agnostic preformatted detection** -- listings are recovered from layout signals rather than C-specific keywords
@@ -89,7 +93,8 @@ Convert a German-language document:
 |------|-------------|
 | `-o`, `--output` | Output `.md` file path (default: next to the source PDF) |
 | `--pages` | Page range, e.g. `1-50` (default: all pages) |
-| `--ocr` / `--scan` | Enable forced full-page OCR (for scanned PDFs). Off by default. |
+| `--ocr` / `--scan` | Force full-page OCR for scanned PDFs or broken text layers. |
+| `--auto-ocr` | Enable OCR only when selected pages are image-only. |
 | `--ocr-engine` | `auto` (default), `mac`, `rapidocr`, `tesseract` |
 | `--langs` | Comma-separated language codes (default: `en`) |
 | `--threads` | Compatibility flag retained for the skill interface; currently unused |
@@ -99,7 +104,35 @@ Convert a German-language document:
 - Markdown files are written next to the source PDF by default (`doc.pdf` -> `doc.md`)
 - Diagrams and figures are exported as PNGs in a `<name>_images/` subfolder
 - Images are referenced inline: `![](name_images/picture_0001.png)`
-- Contents pages prefer internal Markdown links over copied PDF page numbers when matching headings are available
+- Visible contents pages are stripped from the Markdown output; heading navigation is preserved through the reconstructed Markdown hierarchy
+
+## Architecture Notes
+
+The current hierarchy reconstruction order is:
+
+1. embedded PDF outline/bookmarks
+2. visible contents pages parsed from PDF layout
+3. visible contents recovered from extracted Markdown
+4. source-page typography fallback
+
+The current listing-repair strategy is:
+
+1. use `PyMuPDF4LLM` for the initial Markdown draft
+2. recover positioned text from `pdftotext -bbox-layout` when available
+3. fall back to PyMuPDF word geometry when needed
+4. build structural regions and render likely preformatted blocks or definition-table layouts
+
+The visible contents page is usually not preserved in the final Markdown. Instead, it is treated as internal structure data to improve the heading tree shown by Markdown readers.
+
+## Regression Checks
+
+The repo now includes lightweight cleanup checks:
+
+- [tests/test_cleanup_primitives.py](./tests/test_cleanup_primitives.py) for unit-level behavior
+- [tests/run_regression_checks.py](./tests/run_regression_checks.py) for real sample PDFs when those files are available locally
+- [tests/regression_cases.py](./tests/regression_cases.py) for the configurable sample corpus and grouped regression suites
+
+The sample PDF root defaults to the Atari-ST fixture folder used during development, but can be overridden with `PDF_TO_MARKDOWN_SAMPLE_DIR`.
 
 ## Project Structure
 
@@ -109,7 +142,11 @@ Convert a German-language document:
     pdf-to-markdown/
       SKILL.md              # Skill definition (frontmatter + instructions for Claude)
       pdf_to_markdown.py    # PyMuPDF4LLM-based conversion script with region-based repair
+      pdfmd_models.py       # Shared converter data structures
+      pdfmd_ocr.py          # OCR policy and backend helpers
 CLAUDE.md                   # Repo-level notes, architecture summary, and known limitations
+CONVERSION-DETAILS.md       # Full status-quo architecture walkthrough
+CODE_REVIEW.md              # Findings-first review of the current script
 ```
 
 ## License
