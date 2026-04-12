@@ -11,9 +11,11 @@ from .headings import (
     apply_contents_heading_levels,
     apply_outline_heading_levels,
     apply_visual_heading_levels,
+    match_headings_to_source_lines,
     extract_contents_outline_from_markdown,
     extract_contents_outline_from_pdf,
     get_cached_outline,
+    extract_markdown_headings,
     strip_contents_sections,
 )
 from .models import ConversionContext
@@ -23,7 +25,10 @@ from .text import (
 )
 
 
-def remove_running_headers(md_text: str) -> str:
+def remove_running_headers(
+    md_text: str,
+    context: ConversionContext | None = None,
+) -> str:
     """Remove repeated running headers while leaving heading depth untouched."""
     lines = md_text.split("\n")
     heading_re = re.compile(r"^(#{1,6})\s+(.+)$")
@@ -42,7 +47,34 @@ def remove_running_headers(md_text: str) -> str:
 
     counts = __import__("collections").Counter(text for _, text in heading_occurrences)
 
+    source_matches: dict[int, dict[str, float | str]] = {}
+    if context is not None:
+        headings = extract_markdown_headings(md_text)
+        if headings:
+            source_matches = match_headings_to_source_lines(
+                headings,
+                context.pdf_path,
+                context.page_numbers,
+                style_cache=context.style_cache,
+            )
+
     def is_banner_like(index: int) -> bool:
+        if source_matches:
+            matched_heading_idx = next(
+                (
+                    heading_idx
+                    for heading_idx, source in source_matches.items()
+                    if headings[heading_idx].line_idx == index
+                ),
+                None,
+            )
+            if matched_heading_idx is not None:
+                source = source_matches[matched_heading_idx]
+                y0 = float(source.get("y0", 9999.0))
+                size = float(source.get("size", 0.0))
+                if y0 <= 65.0 and size <= 15.5:
+                    return True
+
         # Running headers usually sit alone at a page boundary and are immediately
         # followed by the real section heading rather than by body text.
         next_idx = index + 1
@@ -128,6 +160,60 @@ def merge_adjacent_fenced_blocks(md_text: str) -> str:
             md_text,
         )
     return md_text
+
+
+def merge_fenced_block_with_code_bullets(md_text: str) -> str:
+    """Merge a fenced code block followed by bulletized inline-code lines."""
+    lines = md_text.splitlines()
+    result: list[str] = []
+    i = 0
+
+    while i < len(lines):
+        if lines[i] != "```":
+            result.append(lines[i])
+            i += 1
+            continue
+
+        j = i + 1
+        block_lines: list[str] = []
+        while j < len(lines) and lines[j] != "```":
+            block_lines.append(lines[j])
+            j += 1
+        if j >= len(lines):
+            result.extend(lines[i:])
+            break
+
+        bullet_idx = j + 1
+        while bullet_idx < len(lines) and not lines[bullet_idx].strip():
+            bullet_idx += 1
+
+        code_bullets: list[str] = []
+        scan_idx = bullet_idx
+        while scan_idx < len(lines):
+            stripped = lines[scan_idx].strip()
+            if not stripped:
+                scan_idx += 1
+                continue
+            match = re.fullmatch(r"-\s+`(.+?)`", stripped)
+            if not match:
+                break
+            code_bullets.append(match.group(1))
+            scan_idx += 1
+
+        if code_bullets:
+            result.append("```")
+            result.extend(block_lines)
+            result.extend(code_bullets)
+            result.append("```")
+            i = scan_idx
+            continue
+
+        result.append(lines[i])
+        result.extend(block_lines)
+        result.append(lines[j])
+        i = j + 1
+
+    return "\n".join(result)
 
 
 def clean_markdown_tables(md_text: str) -> str:
@@ -416,7 +502,7 @@ def cleanup_markdown(
     page_numbers = context.page_numbers
 
     md_text = cleanup_heading_markup(md_text)
-    md_text = remove_running_headers(md_text)
+    md_text = remove_running_headers(md_text, context)
     md_text = convert_contents_tables_to_lists(md_text)
     md_text = expand_contents_paragraphs(md_text)
 
@@ -449,6 +535,7 @@ def cleanup_markdown(
     md_text = split_inline_bullet_runs(md_text)
     md_text = dedupe_adjacent_bullets(md_text)
     md_text = strip_contents_sections(md_text)
+    md_text = merge_fenced_block_with_code_bullets(md_text)
     md_text = merge_adjacent_fenced_blocks(md_text)
     md_text = make_image_refs_relative(
         md_text,

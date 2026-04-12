@@ -7,7 +7,6 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from .document import get_document
 from .models import Region
 from .text import normalize_inline_spacing, normalize_whitespace
 
@@ -17,6 +16,7 @@ ROW_CLUSTER_Y_TOLERANCE = 5.0
 WORD_GAP_NEW_CELL_MIN = 14.0
 INDENT_STEP = 10.0
 STRUCTURED_SHORT_ROW_MAX = 72
+STRUCTURED_SHORT_ROW_RATIO_MIN = 0.8
 STRUCTURED_INDENT_SPAN_MIN = 12.0
 STRUCTURED_AVG_WORDS_MAX = 8.0
 DEFINITION_LEFT_ALIGN_TOLERANCE = 16.0
@@ -100,13 +100,18 @@ def extract_page_lines_from_pymupdf(
     xml_cache: dict[int, list[dict[str, float | str]]],
 ) -> list[dict[str, float | str]]:
     """Extract positioned lines for one page using PyMuPDF word geometry."""
+    import pymupdf
+
     cache_key = -page_no
     if cache_key in xml_cache:
         return xml_cache[cache_key]
 
-    doc = get_document(pdf_path)
-    page = doc.load_page(page_no - 1)
-    words = page.get_text("words", sort=True)
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page = doc.load_page(page_no - 1)
+        words = page.get_text("words", sort=True)
+    finally:
+        doc.close()
 
     grouped: dict[tuple[int, int], list[tuple[float, float, float, float, str]]] = {}
     for word in words:
@@ -346,10 +351,11 @@ def region_is_structured(region: Region) -> bool:
     indent_count = len(indent_levels(region.rows))
     multi_col = max(len(row) for row in region.rows) >= 2
     indent_span = max(leading_x_positions(region.rows)) - min(leading_x_positions(region.rows))
+    short_row_floor = max(2, int(len(texts) * STRUCTURED_SHORT_ROW_RATIO_MIN))
 
     return (
         len(region.rows) >= 2
-        and short_rows >= max(2, len(texts) - 1)
+        and short_rows >= short_row_floor
         and proseish_rows <= 1
         and avg_words <= STRUCTURED_AVG_WORDS_MAX
         and (multi_col or indent_count >= 2 or indent_span >= STRUCTURED_INDENT_SPAN_MIN or punctuation_rows >= 3)

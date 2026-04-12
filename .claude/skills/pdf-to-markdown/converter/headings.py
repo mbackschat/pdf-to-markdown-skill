@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .document import get_document
 from .models import ConversionContext, MarkdownHeading, OutlineEntry
 from .text import (
     PAGE_MARKER_RE,
@@ -23,13 +22,18 @@ def extract_page_style_lines(
     style_cache: dict[int, list[dict[str, float | str]]],
 ) -> list[dict[str, float | str]]:
     """Extract positioned lines plus font-size metadata using PyMuPDF text dict output."""
+    import pymupdf
+
     cache_key = page_no
     if cache_key in style_cache:
         return style_cache[cache_key]
 
-    doc = get_document(pdf_path)
-    page = doc.load_page(page_no - 1)
-    data = page.get_text("dict")
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page = doc.load_page(page_no - 1)
+        data = page.get_text("dict")
+    finally:
+        doc.close()
 
     lines: list[dict[str, float | str]] = []
     for block in data.get("blocks", []):
@@ -61,9 +65,14 @@ def extract_page_style_lines(
 
 def extract_pdf_outline(pdf_path: Path, page_numbers: list[int] | None = None) -> list[OutlineEntry]:
     """Read the PDF outline/bookmark tree, optionally filtered to selected pages."""
+    import pymupdf
+
     selected_pages = {page + 1 for page in page_numbers} if page_numbers is not None else None
-    doc = get_document(pdf_path)
-    outline = doc.get_toc()
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        outline = doc.get_toc()
+    finally:
+        doc.close()
     entries: list[OutlineEntry] = []
 
     for level, title, page in outline:
@@ -221,8 +230,13 @@ def extract_contents_outline_from_pdf(
     style_cache: dict[int, list[dict[str, float | str]]] | None = None,
 ) -> list[OutlineEntry]:
     """Extract a best-effort outline from visible contents pages using source layout."""
-    doc = get_document(pdf_path)
-    total_pages = doc.page_count
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        total_pages = doc.page_count
+    finally:
+        doc.close()
 
     selected_pages = (
         [page + 1 for page in page_numbers]
@@ -425,8 +439,13 @@ def match_headings_to_source_lines(
     if not headings:
         return {}
 
-    doc = get_document(pdf_path)
-    page_count = doc.page_count
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page_count = doc.page_count
+    finally:
+        doc.close()
 
     selected_pages = (
         [page + 1 for page in page_numbers]

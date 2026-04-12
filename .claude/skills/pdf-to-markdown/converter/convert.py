@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 from . import cleanup
-from .document import close_cached_documents, get_document
 from .models import ConversionContext
 from .ocr import get_ocr_function, map_lang_codes, resolve_ocr_resolution
 from .regions import restore_code_blocks_in_chunk
@@ -40,19 +39,23 @@ def build_page_numbers(page_range: tuple[int, int] | None, page_count: int) -> l
 
 def detect_text_pages(pdf_path: Path, page_numbers: list[int] | None) -> tuple[int, int]:
     """Return (pages_with_text, pages_without_text) for the selected pages."""
+    import pymupdf
     import re
 
-    doc = get_document(pdf_path)
-    selected = page_numbers if page_numbers is not None else list(range(doc.page_count))
-    with_text = 0
-    without_text = 0
-    for page_no in selected:
-        text = doc.load_page(page_no).get_text("text")
-        if re.search(r"\S", text):
-            with_text += 1
-        else:
-            without_text += 1
-    return with_text, without_text
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        selected = page_numbers if page_numbers is not None else list(range(doc.page_count))
+        with_text = 0
+        without_text = 0
+        for page_no in selected:
+            text = doc.load_page(page_no).get_text("text")
+            if re.search(r"\S", text):
+                with_text += 1
+            else:
+                without_text += 1
+        return with_text, without_text
+    finally:
+        doc.close()
 
 
 def collect_pdf_files(input_path: Path) -> list[Path]:
@@ -164,9 +167,15 @@ def convert_pdf(
     total_files: int | None = None,
 ) -> None:
     """Convert one PDF and write its Markdown output next to it or to an explicit path."""
-    doc = get_document(pdf_path)
-    page_range = parse_page_range(pages_arg) if pages_arg else None
-    page_numbers = build_page_numbers(page_range, doc.page_count)
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page_range = parse_page_range(pages_arg) if pages_arg else None
+        page_numbers = build_page_numbers(page_range, doc.page_count)
+    finally:
+        if not doc.is_closed:
+            doc.close()
 
     with_text, without_text = detect_text_pages(pdf_path, page_numbers)
     context = ConversionContext(
@@ -262,36 +271,33 @@ def run_cli(args) -> int:
     langs = [lang.strip() for lang in args.langs.split(",") if lang.strip()]
     batch_start = time.time()
 
-    try:
-        for file_idx, pdf_path in enumerate(pdf_files, 1):
-            try:
-                convert_pdf(
-                    pdf_path,
-                    output_arg=args.output,
-                    pages_arg=args.pages,
-                    ocr_requested=args.ocr,
-                    auto_ocr_requested=args.auto_ocr,
-                    ocr_engine=args.ocr_engine,
-                    langs=langs,
-                    batch_mode=len(pdf_files) > 1,
-                    file_idx=file_idx,
-                    total_files=len(pdf_files),
-                )
-            except ValueError as exc:
-                print(f"Error: {exc}")
-                return 1
-            except Exception as exc:
-                print(f"\nError converting {pdf_path.name}: {exc}")
-                if len(pdf_files) > 1:
-                    print("  Skipping this file...")
-                    continue
-                return 1
+    for file_idx, pdf_path in enumerate(pdf_files, 1):
+        try:
+            convert_pdf(
+                pdf_path,
+                output_arg=args.output,
+                pages_arg=args.pages,
+                ocr_requested=args.ocr,
+                auto_ocr_requested=args.auto_ocr,
+                ocr_engine=args.ocr_engine,
+                langs=langs,
+                batch_mode=len(pdf_files) > 1,
+                file_idx=file_idx,
+                total_files=len(pdf_files),
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 1
+        except Exception as exc:
+            print(f"\nError converting {pdf_path.name}: {exc}")
+            if len(pdf_files) > 1:
+                print("  Skipping this file...")
+                continue
+            return 1
 
-        if len(pdf_files) > 1:
-            batch_elapsed = time.time() - batch_start
-            print(f"\n{'=' * 40}")
-            print(f"Batch complete: {len(pdf_files)} files in {batch_elapsed:.1f}s")
+    if len(pdf_files) > 1:
+        batch_elapsed = time.time() - batch_start
+        print(f"\n{'=' * 40}")
+        print(f"Batch complete: {len(pdf_files)} files in {batch_elapsed:.1f}s")
 
-        return 0
-    finally:
-        close_cached_documents()
+    return 0

@@ -15,6 +15,7 @@ if str(SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(SKILL_DIR))
 
 from converter import cleanup, convert, headings, ocr
+from converter.models import ConversionContext, MarkdownHeading
 
 
 class OcrResolutionTests(unittest.TestCase):
@@ -121,6 +122,67 @@ class HeadingCleanupTests(unittest.TestCase):
         self.assertIn("Body text for chapter one.", cleaned)
         self.assertIn("Body text for chapter two.", cleaned)
         self.assertIn("Body text for chapter three.", cleaned)
+
+    def test_remove_running_headers_uses_page_band_signal_when_available(self):
+        source = "\n".join(
+            [
+                "## C-MANSHIP COMPLETE – by CLAYTON WALNUT",
+                "",
+                "Body page one.",
+                "",
+                "## C-MANSHIP COMPLETE – by CLAYTON WALNUT",
+                "",
+                "### What about the Disks?",
+                "Body page two.",
+                "",
+                "## C-MANSHIP COMPLETE – by CLAYTON WALNUT",
+                "",
+                "Body page three.",
+            ]
+        )
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        fake_headings = [
+            MarkdownHeading(0, "C-MANSHIP COMPLETE – by CLAYTON WALNUT", [], "a", 2),
+            MarkdownHeading(4, "C-MANSHIP COMPLETE – by CLAYTON WALNUT", [], "b", 2),
+            MarkdownHeading(6, "What about the Disks?", [], "c", 3),
+            MarkdownHeading(9, "C-MANSHIP COMPLETE – by CLAYTON WALNUT", [], "d", 2),
+        ]
+        fake_matches = {
+            0: {"y0": 41.7, "size": 14.0},
+            1: {"y0": 41.7, "size": 14.0},
+            2: {"y0": 176.0, "size": 18.0},
+            3: {"y0": 41.7, "size": 14.0},
+        }
+        with mock.patch.object(cleanup, "extract_markdown_headings", return_value=fake_headings), mock.patch.object(
+            cleanup, "match_headings_to_source_lines", return_value=fake_matches
+        ):
+            cleaned = cleanup.remove_running_headers(source, context)
+        self.assertNotIn("C-MANSHIP COMPLETE – by CLAYTON WALNUT", cleaned)
+        self.assertIn("### What about the Disks?", cleaned)
+
+
+class ListingCleanupTests(unittest.TestCase):
+    def test_merge_fenced_block_with_code_bullets(self):
+        source = "\n".join(
+            [
+                "#### Program Listing #1",
+                "",
+                "```",
+                "10   'ST CHECK typing validator by Clayton Walnum",
+                "```",
+                "",
+                "- `20   'based on a program by Istvan Mohos and Tom Hudson`",
+                "",
+                "- `30   if peek(systab)=1 then cl=17 else cl=32`",
+            ]
+        )
+        cleaned = cleanup.merge_fenced_block_with_code_bullets(source)
+        self.assertIn("```", cleaned)
+        self.assertIn("10   'ST CHECK typing validator by Clayton Walnum", cleaned)
+        self.assertIn("20   'based on a program by Istvan Mohos and Tom Hudson", cleaned)
+        self.assertIn("30   if peek(systab)=1 then cl=17 else cl=32", cleaned)
+        self.assertNotIn("- `20", cleaned)
+        self.assertNotIn("- `30", cleaned)
 
 
 class TocFallbackTests(unittest.TestCase):

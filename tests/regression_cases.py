@@ -70,4 +70,14 @@ def regression_cases() -> list[dict[str, object]]:
                 r"## A 2\.5 Meg Socketed Ram Upgrade for the 1040ST",
             ],
         },
+        {
+            "name": "Bitbook formatter listing",
+            "suite": "listings",
+            "pdf": pdf_dir / "Bitbook2.pdf",
+            "args": [],
+            "checks": [
+                r"```[\s\S]*/\* formath\.c Formatter fuer High Density Disketten \*/",
+                r"```[\s\S]*Public Domain High Density Mini Formatter",
+            ],
+        },
     ]

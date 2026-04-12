@@ -168,7 +168,8 @@ def build_ocrmac_function(langs: list[str]):
                 text,
                 fontsize=fontsize,
                 fontname=fontname,
-                render_mode=0,
+                # Keep OCR searchable without visibly repainting scanned pages.
+                render_mode=3,
                 morph=(rect.bl, mat),
             )
 
