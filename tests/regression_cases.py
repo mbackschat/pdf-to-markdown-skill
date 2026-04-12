@@ -60,4 +60,14 @@ def regression_cases() -> list[dict[str, object]]:
                 r"#### Flag Summary",
             ],
         },
+        {
+            "name": "Bitbook sparse no-outline headings",
+            "suite": "headings",
+            "pdf": pdf_dir / "Bitbook2.pdf",
+            "args": [],
+            "checks": [
+                r"## The Little Black Bit Book\.",
+                r"## A 2\.5 Meg Socketed Ram Upgrade for the 1040ST",
+            ],
+        },
     ]

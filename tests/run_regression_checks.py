@@ -33,8 +33,9 @@ def run_case(case: dict[str, object]) -> bool:
     env = dict(os.environ)
     env.setdefault("UV_CACHE_DIR", "/tmp/uv-cache")
     result = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, env=env)
-    if result.returncode != 0:
-        combined = f"{result.stdout}\n{result.stderr}"
+    returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
+    if returncode != 0:
+        combined = f"{stdout}\n{stderr}"
         if any(
             marker in combined
             for marker in [
@@ -46,9 +47,9 @@ def run_case(case: dict[str, object]) -> bool:
         ):
             print(f"SKIP {case['name']}: uv environment unavailable")
             return True
-        print(result.stdout)
-        print(result.stderr)
-        print(f"FAIL {case['name']}: converter exited with {result.returncode}")
+        print(stdout)
+        print(stderr)
+        print(f"FAIL {case['name']}: converter exited with {returncode}")
         return False
 
     output_path = output_path_for(pdf_path)

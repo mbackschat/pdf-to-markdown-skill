@@ -7,8 +7,31 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .document import get_document
 from .models import Region
 from .text import normalize_inline_spacing, normalize_whitespace
+
+LINE_VERTICAL_MARGIN = 1.0
+LINE_BOX_OVERLAP_MIN = 0.35
+ROW_CLUSTER_Y_TOLERANCE = 5.0
+WORD_GAP_NEW_CELL_MIN = 14.0
+INDENT_STEP = 10.0
+STRUCTURED_SHORT_ROW_MAX = 72
+STRUCTURED_INDENT_SPAN_MIN = 12.0
+STRUCTURED_AVG_WORDS_MAX = 8.0
+DEFINITION_LEFT_ALIGN_TOLERANCE = 16.0
+DEFINITION_RIGHT_ALIGN_TOLERANCE = 24.0
+DEFINITION_RIGHT_CONTINUATION_TOLERANCE = 12.0
+CODE_RENDER_CHARS_PER_UNIT = 5.5
+TABLE_GROUP_RIGHT_COLUMN_MIN_GAP = 60.0
+TABLE_GROUP_VERTICAL_OVERLAP_MIN = 0.7
+PREFORMATTED_MAX_SENTENCE_LIKE_ROWS = 1
+PREFORMATTED_AVG_WORDS_MAX = 6.0
+PREFORMATTED_SHORT_LAYOUT_AVG_WORDS_MAX = 5.0
+REGION_GROUP_VERTICAL_GAP_MAX = 28.0
+REGION_GROUP_HORIZONTAL_OVERLAP_MIN = 0.6
+REGION_GROUP_LEFT_EDGE_DELTA_MAX = 28.0
+REGION_GROUP_RIGHT_EDGE_DELTA_MAX = 40.0
 
 
 def extract_page_lines_from_bbox_layout(
@@ -81,14 +104,9 @@ def extract_page_lines_from_pymupdf(
     if cache_key in xml_cache:
         return xml_cache[cache_key]
 
-    import pymupdf
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        page = doc.load_page(page_no - 1)
-        words = page.get_text("words", sort=True)
-    finally:
-        doc.close()
+    doc = get_document(pdf_path)
+    page = doc.load_page(page_no - 1)
+    words = page.get_text("words", sort=True)
 
     grouped: dict[tuple[int, int], list[tuple[float, float, float, float, str]]] = {}
     for word in words:
@@ -144,12 +162,12 @@ def line_overlaps_box(line: dict[str, float | str], box: list[int]) -> bool:
     line_y1 = float(line["y1"])
 
     line_center_y = (line_y0 + line_y1) / 2.0
-    if line_center_y < y0 - 1 or line_center_y > y1 + 1:
+    if line_center_y < y0 - LINE_VERTICAL_MARGIN or line_center_y > y1 + LINE_VERTICAL_MARGIN:
         return False
 
     overlap_x = max(0.0, min(x1, line_x1) - max(x0, line_x0))
     line_width = max(1.0, line_x1 - line_x0)
-    return overlap_x / line_width >= 0.35
+    return overlap_x / line_width >= LINE_BOX_OVERLAP_MIN
 
 
 def recover_box_line_infos(
@@ -170,7 +188,7 @@ def recover_box_line_infos(
 
 def cluster_lines_by_row(
     line_infos: list[dict[str, float | str]],
-    y_tolerance: float = 5.0,
+    y_tolerance: float = ROW_CLUSTER_Y_TOLERANCE,
 ) -> list[list[dict[str, float | str]]]:
     """Group positioned lines into visual rows."""
     rows: list[list[dict[str, float | str]]] = []
@@ -235,7 +253,7 @@ def rows_to_cells(rows: list[list[dict[str, float | str]]]) -> list[list[dict[st
                         continue
 
                     gap = word_x0 - prev_x1
-                    if gap > 14:
+                    if gap > WORD_GAP_NEW_CELL_MIN:
                         flush_current()
                         current_words = [word_text]
                         current_x0 = word_x0
@@ -277,7 +295,7 @@ def leading_x_positions(rows: list[list[dict[str, object]]]) -> list[float]:
     return [float(row[0]["x0"]) for row in rows if row]
 
 
-def indent_levels(rows: list[list[dict[str, object]]], step: float = 10.0) -> set[int]:
+def indent_levels(rows: list[list[dict[str, object]]], step: float = INDENT_STEP) -> set[int]:
     """Estimate distinct indentation levels within a block."""
     base_x = block_base_x(rows)
     return {max(0, int(round((float(row[0]["x0"]) - base_x) / step))) for row in rows if row}
@@ -321,7 +339,7 @@ def region_is_structured(region: Region) -> bool:
         return False
 
     texts = region_texts(region)
-    short_rows = sum(1 for text in texts if len(text) <= 72)
+    short_rows = sum(1 for text in texts if len(text) <= STRUCTURED_SHORT_ROW_MAX)
     proseish_rows = sum(1 for text in texts if len(text.split()) >= 10 and text.endswith((".", "!", "?")))
     punctuation_rows = sum(1 for text in texts if re.search(r"[{}[\]<>:=;/\\|()]", text))
     avg_words = region_avg_words(region)
@@ -333,8 +351,8 @@ def region_is_structured(region: Region) -> bool:
         len(region.rows) >= 2
         and short_rows >= max(2, len(texts) - 1)
         and proseish_rows <= 1
-        and avg_words <= 8
-        and (multi_col or indent_count >= 2 or indent_span >= 12 or punctuation_rows >= 3)
+        and avg_words <= STRUCTURED_AVG_WORDS_MAX
+        and (multi_col or indent_count >= 2 or indent_span >= STRUCTURED_INDENT_SPAN_MIN or punctuation_rows >= 3)
     )
 
 
@@ -356,8 +374,8 @@ def rows_look_like_definition_table(rows: list[list[dict[str, object]]]) -> bool
     left_x_positions = [float(row[0]["x0"]) for row in paired]
     right_x_positions = [float(row[1]["x0"]) for row in paired]
     aligned_columns = (
-        max(left_x_positions) - min(left_x_positions) <= 16
-        and max(right_x_positions) - min(right_x_positions) <= 24
+        max(left_x_positions) - min(left_x_positions) <= DEFINITION_LEFT_ALIGN_TOLERANCE
+        and max(right_x_positions) - min(right_x_positions) <= DEFINITION_RIGHT_ALIGN_TOLERANCE
     )
     return aligned_columns and left_avg <= 32 and right_avg >= left_avg and not codeish
 
@@ -376,7 +394,7 @@ def render_definition_table(rows: list[list[dict[str, object]]]) -> str:
             right = row_text([row[1]], normalized=True)
             if left and right:
                 table_rows.append((left, right))
-        elif len(row) == 1 and table_rows and float(row[0]["x0"]) >= right_anchor - 12:
+        elif len(row) == 1 and table_rows and float(row[0]["x0"]) >= right_anchor - DEFINITION_RIGHT_CONTINUATION_TOLERANCE:
             continuation = row_text(row, normalized=True)
             table_rows[-1] = (table_rows[-1][0], f"{table_rows[-1][1]} {continuation}".strip())
 
@@ -398,7 +416,7 @@ def region_looks_preformatted(region: Region) -> bool:
     normalized_texts = region_texts(region, normalized=True)
     punctuation_rows = sum(1 for text in texts if re.search(r"[{}[\]<>:=;/\\|()]", text))
     delimiter_rows = sum(1 for text in texts if re.search(r"[_./\\-]", text))
-    short_rows = sum(1 for text in texts if len(text) <= 72)
+    short_rows = sum(1 for text in texts if len(text) <= STRUCTURED_SHORT_ROW_MAX)
     proseish_rows = sum(1 for text in texts if len(text.split()) >= 10 and text.endswith((".", "!", "?")))
     avg_words = sum(len(text.split()) for text in texts) / max(1, len(texts))
     sentence_like = sum(text.endswith((".", "!", "?")) for text in texts)
@@ -408,17 +426,32 @@ def region_looks_preformatted(region: Region) -> bool:
 
     if not aligned_layout:
         return False
-    if len(region.rows) >= 3 and sentence_like <= 1 and avg_words <= 6 and (punctuation_rows >= 1 or delimiter_rows >= 2):
+    if (
+        len(region.rows) >= 3
+        and sentence_like <= PREFORMATTED_MAX_SENTENCE_LIKE_ROWS
+        and avg_words <= PREFORMATTED_AVG_WORDS_MAX
+        and (punctuation_rows >= 1 or delimiter_rows >= 2)
+    ):
         return True
-    if len(region.rows) >= 4 and short_rows >= len(region.rows) - 1 and proseish_rows == 0 and avg_words <= 5:
+    if (
+        len(region.rows) >= 4
+        and short_rows >= len(region.rows) - 1
+        and proseish_rows == 0
+        and avg_words <= PREFORMATTED_SHORT_LAYOUT_AVG_WORDS_MAX
+    ):
         return True
-    return punctuation_rows >= 1 and proseish_rows == 0 and avg_words <= 6 and snippet_norm == rows_norm
+    return (
+        punctuation_rows >= 1
+        and proseish_rows == 0
+        and avg_words <= PREFORMATTED_AVG_WORDS_MAX
+        and snippet_norm == rows_norm
+    )
 
 
 def render_layout_code_block(rows: list[list[dict[str, object]]]) -> str:
     """Render layout rows as an aligned fenced code block."""
     base_x = block_base_x(rows)
-    chars_per_unit = 5.5
+    chars_per_unit = CODE_RENDER_CHARS_PER_UNIT
     rendered: list[str] = []
     for row in rows:
         line = ""
@@ -499,9 +532,9 @@ def find_definition_table_groups(page_boxes: list[dict]) -> list[list[int]]:
             if box_info.get("class") != "text":
                 continue
             bbox = box_info["bbox"]
-            if bbox[0] < left_x1 + 60:
+            if bbox[0] < left_x1 + TABLE_GROUP_RIGHT_COLUMN_MIN_GAP:
                 continue
-            if overlap_ratio(left_y0, left_y1, bbox[1], bbox[3]) < 0.7:
+            if overlap_ratio(left_y0, left_y1, bbox[1], bbox[3]) < TABLE_GROUP_VERTICAL_OVERLAP_MIN:
                 continue
             candidate_idx = j
             break
@@ -527,12 +560,12 @@ def can_group_preformatted_regions(left: Region, right: Region, separator: str) 
 
     return (
         structured_pair
-        and vertical_gap <= 28
-        and x_overlap >= 0.6
-        and left_edge_delta <= 28
-        and right_edge_delta <= 40
-        and region_avg_words(left) <= 8
-        and region_avg_words(right) <= 8
+        and vertical_gap <= REGION_GROUP_VERTICAL_GAP_MAX
+        and x_overlap >= REGION_GROUP_HORIZONTAL_OVERLAP_MIN
+        and left_edge_delta <= REGION_GROUP_LEFT_EDGE_DELTA_MAX
+        and right_edge_delta <= REGION_GROUP_RIGHT_EDGE_DELTA_MAX
+        and region_avg_words(left) <= STRUCTURED_AVG_WORDS_MAX
+        and region_avg_words(right) <= STRUCTURED_AVG_WORDS_MAX
     )
 
 

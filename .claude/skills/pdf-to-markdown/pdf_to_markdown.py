@@ -19,10 +19,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from converter.cleanup import remove_running_headers
-from converter.convert import build_page_numbers, parse_page_range, run_cli
-from converter.headings import looks_like_toc_title_only_line
-from converter.ocr import resolve_ocr_resolution
+from converter.convert import run_cli
 
 
 def build_parser() -> argparse.ArgumentParser:

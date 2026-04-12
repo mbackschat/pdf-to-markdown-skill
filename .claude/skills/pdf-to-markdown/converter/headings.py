@@ -5,11 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .document import get_document
 from .models import ConversionContext, MarkdownHeading, OutlineEntry
 from .text import (
     PAGE_MARKER_RE,
-    heading_match_keys,
     looks_like_contents_heading,
+    normalize_inline_spacing,
     sanitize_contents_entry,
     slugify_heading,
     strip_markdown_inline,
@@ -26,14 +27,9 @@ def extract_page_style_lines(
     if cache_key in style_cache:
         return style_cache[cache_key]
 
-    import pymupdf
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        page = doc.load_page(page_no - 1)
-        data = page.get_text("dict")
-    finally:
-        doc.close()
+    doc = get_document(pdf_path)
+    page = doc.load_page(page_no - 1)
+    data = page.get_text("dict")
 
     lines: list[dict[str, float | str]] = []
     for block in data.get("blocks", []):
@@ -65,10 +61,8 @@ def extract_page_style_lines(
 
 def extract_pdf_outline(pdf_path: Path, page_numbers: list[int] | None = None) -> list[OutlineEntry]:
     """Read the PDF outline/bookmark tree, optionally filtered to selected pages."""
-    import pymupdf
-
     selected_pages = {page + 1 for page in page_numbers} if page_numbers is not None else None
-    doc = pymupdf.open(str(pdf_path))
+    doc = get_document(pdf_path)
     outline = doc.get_toc()
     entries: list[OutlineEntry] = []
 
@@ -140,19 +134,95 @@ def looks_like_toc_title_only_line(text: str) -> bool:
     return bool(re.search(r"[A-Za-z]", cleaned))
 
 
+def heading_match_keys(text: str) -> list[str]:
+    """Generate matching keys for headings and TOC entries."""
+    text = sanitize_contents_entry(text)
+    stripped_number = re.sub(r"^(?:[A-Z]\.)?\d+(?:\.\d+)*[:.)-]?\s*", "", text)
+    stripped_chapter = re.sub(
+        r"^(?:chapter|appendix)\s+[A-Z0-9]+[:.)-]?\s*",
+        "",
+        stripped_number,
+        flags=re.IGNORECASE,
+    )
+    keys = {text.lower()}
+    if stripped_number != text:
+        keys.add(stripped_number.lower())
+    if stripped_chapter != stripped_number:
+        keys.add(stripped_chapter.lower())
+
+    for variant in {text.lower(), stripped_number.lower(), stripped_chapter.lower()}:
+        compact = re.sub(r"[^a-z0-9]+", "", variant)
+        if compact:
+            keys.add(compact)
+
+    no_apostrophes = {
+        variant.replace("'", "").replace("’", "")
+        for variant in {text.lower(), stripped_number.lower(), stripped_chapter.lower()}
+        if variant
+    }
+    for variant in no_apostrophes:
+        if variant:
+            keys.add(variant)
+        compact_no_apostrophes = re.sub(r"[^a-z0-9]+", "", variant)
+        if compact_no_apostrophes:
+            keys.add(compact_no_apostrophes)
+
+    return [key for key in keys if key]
+
+
+def extract_contents_entries_from_text(text: str) -> list[str]:
+    """Extract TOC entry titles from a flattened contents line."""
+    flattened = strip_markdown_inline(text).replace("…", ".")
+    flattened = re.sub(
+        rf"(?<![\w/])({PAGE_MARKER_RE})(?![\w/])\s+(?=(?:Chapter|Appendix|Foreword|Index|Bibliography|[A-Z]))",
+        r"\1\n",
+        flattened,
+        flags=re.IGNORECASE,
+    )
+
+    entries: list[str] = []
+    parts = flattened.splitlines()
+    had_split = len(parts) > 1
+    for part in parts:
+        part = normalize_inline_spacing(part)
+        if not part:
+            continue
+
+        matches = list(
+            re.finditer(
+                rf"(.+?)(?:\s*[.\u2026]{{2,}}\s*|\s+)(?<![\w/])({PAGE_MARKER_RE})(?![\w/])$",
+                part,
+                flags=re.IGNORECASE,
+            )
+        )
+        if not matches:
+            if had_split:
+                cleaned_tail = sanitize_contents_entry(part)
+                if (
+                    cleaned_tail
+                    and len(cleaned_tail) > 2
+                    and not looks_like_contents_heading(cleaned_tail)
+                    and not re.fullmatch(r"[.\-•_ ]+", cleaned_tail)
+                ):
+                    entries.append(cleaned_tail)
+            continue
+
+        best_match = max(matches, key=lambda match: len(match.group(1).strip()))
+        cleaned = sanitize_contents_entry(best_match.group(1))
+        if cleaned and not re.fullmatch(r"[.\-•_ ]+", cleaned):
+            entries.append(cleaned)
+
+    return entries
+
+
 def extract_contents_outline_from_pdf(
     pdf_path: Path,
     page_numbers: list[int] | None = None,
     style_cache: dict[int, list[dict[str, float | str]]] | None = None,
 ) -> list[OutlineEntry]:
     """Extract a best-effort outline from visible contents pages using source layout."""
-    import pymupdf
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        total_pages = doc.page_count
-    finally:
-        doc.close()
+    doc = get_document(pdf_path)
+    total_pages = doc.page_count
 
     selected_pages = (
         [page + 1 for page in page_numbers]
@@ -355,13 +425,8 @@ def match_headings_to_source_lines(
     if not headings:
         return {}
 
-    import pymupdf
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        page_count = doc.page_count
-    finally:
-        doc.close()
+    doc = get_document(pdf_path)
+    page_count = doc.page_count
 
     selected_pages = (
         [page + 1 for page in page_numbers]
