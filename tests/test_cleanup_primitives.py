@@ -14,7 +14,7 @@ SKILL_DIR = (
 if str(SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(SKILL_DIR))
 
-from converter import cleanup, convert, headings, ocr
+from converter import cleanup, convert, headings, ocr, reference_entries
 from converter.models import ConversionContext, MarkdownHeading
 
 
@@ -159,6 +159,71 @@ class HeadingCleanupTests(unittest.TestCase):
             cleaned = cleanup.remove_running_headers(source, context)
         self.assertNotIn("C-MANSHIP COMPLETE – by CLAYTON WALNUT", cleaned)
         self.assertIn("### What about the Disks?", cleaned)
+
+    def test_reference_entry_signatures_are_demoted_from_headings(self):
+        source = "\n".join(
+            [
+                "## GEMDOS Function Reference",
+                "",
+                "### Cauxin()",
+                "",
+                "### WORD Cauxin(VOID)",
+                "",
+                "### OPCODE",
+                "",
+                "Body",
+                "",
+                "### Cauxis()",
+                "",
+                "### WORD Cauxis(VOID)",
+            ]
+        )
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        fake_headings = [
+            MarkdownHeading(0, "GEMDOS Function Reference", [], "gemdos-function-reference", 2),
+            MarkdownHeading(2, "Cauxin()", [], "cauxin", 3),
+            MarkdownHeading(4, "WORD Cauxin(VOID)", [], "word-cauxin-void", 3),
+            MarkdownHeading(6, "OPCODE", [], "opcode", 3),
+            MarkdownHeading(10, "Cauxis()", [], "cauxis", 3),
+            MarkdownHeading(12, "WORD Cauxis(VOID)", [], "word-cauxis-void", 3),
+        ]
+        fake_matches = {
+            0: {"page_no": 58, "x0": 50.0, "y0": 40.0, "size": 18.0, "text": "GEMDOS Function Reference"},
+            1: {"page_no": 59, "x0": 50.5, "y0": 48.6, "size": 20.0, "text": "Cauxin()"},
+            2: {"page_no": 59, "x0": 50.5, "y0": 85.1, "size": 10.0, "text": "WORD Cauxin( VOID )"},
+            3: {"page_no": 59, "x0": 50.5, "y0": 157.3, "size": 10.0, "text": "OPCODE"},
+            4: {"page_no": 59, "x0": 50.5, "y0": 436.1, "size": 20.0, "text": "Cauxis()"},
+            5: {"page_no": 59, "x0": 50.5, "y0": 472.6, "size": 10.0, "text": "WORD Cauxis( VOID )"},
+        }
+        fake_page_lines = [
+            {"x0": 399.5, "y0": 20.8, "size": 10.0, "text": "Cauxin() - 2.39"},
+            {"x0": 50.5, "y0": 48.6, "size": 20.0, "text": "Cauxin()"},
+            {"x0": 50.5, "y0": 85.1, "size": 10.0, "text": "WORD Cauxin( VOID )"},
+            {"x0": 50.5, "y0": 157.3, "size": 10.0, "text": "OPCODE"},
+            {"x0": 137.0, "y0": 157.4, "size": 10.0, "text": "3 (0x03)"},
+            {"x0": 50.5, "y0": 182.3, "size": 10.0, "text": "AVAILABILITY"},
+            {"x0": 137.0, "y0": 182.1, "size": 10.0, "text": "All GEMDOS versions."},
+            {"x0": 50.5, "y0": 207.3, "size": 10.0, "text": "BINDING"},
+            {"x0": 137.0, "y0": 207.2, "size": 10.0, "text": "move.w #$3,-(sp)"},
+            {"x0": 50.5, "y0": 436.1, "size": 20.0, "text": "Cauxis()"},
+            {"x0": 50.5, "y0": 472.6, "size": 10.0, "text": "WORD Cauxis( VOID )"},
+        ]
+        with mock.patch.object(
+            reference_entries, "extract_markdown_headings", return_value=fake_headings
+        ), mock.patch.object(
+            reference_entries, "match_headings_to_source_lines", return_value=fake_matches
+        ), mock.patch.object(
+            reference_entries, "extract_page_style_lines", return_value=fake_page_lines
+        ):
+            cleaned = reference_entries.normalize_reference_entry_headings(source, context)
+        self.assertIn("### Cauxin()", cleaned)
+        self.assertIn("\nWORD Cauxin(VOID)\n", cleaned)
+        self.assertIn("\nOPCODE\n", cleaned)
+        self.assertIn("### Cauxis()", cleaned)
+        self.assertTrue(cleaned.rstrip().endswith("WORD Cauxis(VOID)"))
+        self.assertNotIn("### WORD Cauxin(VOID)", cleaned)
+        self.assertNotIn("### OPCODE", cleaned)
+        self.assertNotIn("### WORD Cauxis(VOID)", cleaned)
 
 
 class ListingCleanupTests(unittest.TestCase):

@@ -62,6 +62,10 @@ def run_case(case: dict[str, object]) -> bool:
         if not re.search(pattern, md_text, flags=re.MULTILINE):
             print(f"FAIL {case['name']}: missing pattern {pattern}")
             return False
+    for pattern in case.get("absent_checks", []):
+        if re.search(pattern, md_text, flags=re.MULTILINE):
+            print(f"FAIL {case['name']}: unexpected pattern {pattern}")
+            return False
 
     print(f"PASS {case['name']}")
     return True

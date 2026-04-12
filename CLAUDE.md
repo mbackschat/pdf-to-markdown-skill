@@ -2,6 +2,10 @@
 
 This repository contains a Claude Code skill that converts PDFs to Markdown.
 
+## Repo Hygiene
+
+- `PLAN.md` is a local planning scratch file and must never be committed to the repository.
+
 ## Current Architecture
 
 - Main extractor: `PyMuPDF4LLM`

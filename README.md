@@ -1,6 +1,8 @@
 # pdf-to-markdown
 
-A [Claude Code skill](https://code.claude.com/docs/en/skills.md) that converts PDF files to Markdown with a digital-first pipeline based on [PyMuPDF4LLM](https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/). It is optimized for technical documentation such as datasheets, hardware manuals, and programming guides with tables, diagrams, and code listings.
+A [Claude Code skill](https://code.claude.com/docs/en/skills.md) that converts PDF files to Markdown with a digital-first pipeline based on [PyMuPDF4LLM](https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/). It is optimized for technical documents and reference material, especially datasheets, hardware manuals, programming guides, and other structured documentation with tables, diagrams, and code listings.
+
+This converter is mainly used on Atari ST and Amiga technical literature, so the current heuristics are tuned toward manuals, reference books, developer documentation, and similar archival technical PDFs. It is not perfect, but it detects listings, tables, and synopsis-like reference sections with repeated structure quite reliably across that kind of material.
 
 ## Features
 
@@ -131,6 +133,7 @@ The repo now includes lightweight cleanup checks:
 - [tests/regression_cases.py](./tests/regression_cases.py) for the configurable sample corpus and grouped regression suites
 
 The sample PDF root now defaults to [tests/pdf](./tests/pdf). You can still override it with `PDF_TO_MARKDOWN_SAMPLE_DIR`.
+The `tests/pdf/` directory is provided as a Git submodule with reference PDFs for regression testing. That submodule currently points to a private repository, so it may not be available unless you have access.
 
 ## Project Structure
 

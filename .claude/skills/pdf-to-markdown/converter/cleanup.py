@@ -19,6 +19,7 @@ from .headings import (
     strip_contents_sections,
 )
 from .models import ConversionContext
+from .reference_entries import normalize_reference_entry_headings
 from .text import (
     cleanup_heading_markup,
     normalize_inline_spacing,
@@ -527,6 +528,7 @@ def cleanup_markdown(
                 style_cache=context.style_cache,
             )
 
+    md_text = normalize_reference_entry_headings(md_text, context)
     md_text = remove_redundant_page_title_headings(md_text)
     md_text = clean_markdown_tables(md_text)
     md_text = fix_definition_bullets(md_text)
@@ -534,6 +536,7 @@ def cleanup_markdown(
     md_text = split_option_bullet_runs(md_text)
     md_text = split_inline_bullet_runs(md_text)
     md_text = dedupe_adjacent_bullets(md_text)
+    md_text = normalize_reference_entry_headings(md_text, context)
     md_text = strip_contents_sections(md_text)
     md_text = merge_fenced_block_with_code_bullets(md_text)
     md_text = merge_adjacent_fenced_blocks(md_text)
