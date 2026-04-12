@@ -160,6 +160,46 @@ class HeadingCleanupTests(unittest.TestCase):
         self.assertNotIn("C-MANSHIP COMPLETE – by CLAYTON WALNUT", cleaned)
         self.assertIn("### What about the Disks?", cleaned)
 
+    def test_remove_running_headers_drops_large_repeated_top_page_titles(self):
+        source = "\n".join(
+            [
+                "## Intro",
+                "",
+                "#### Pure C English Overview",
+                "",
+                "Body one.",
+                "",
+                "#### Pure C English Overview",
+                "",
+                "Body two.",
+                "",
+                "#### Pure C English Overview",
+                "",
+                "Body three.",
+            ]
+        )
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        fake_headings = [
+            MarkdownHeading(0, "Intro", [], "intro", 2),
+            MarkdownHeading(2, "Pure C English Overview", [], "pure-c-english-overview-a", 4),
+            MarkdownHeading(6, "Pure C English Overview", [], "pure-c-english-overview-b", 4),
+            MarkdownHeading(10, "Pure C English Overview", [], "pure-c-english-overview-c", 4),
+        ]
+        fake_matches = {
+            0: {"page_no": 1, "x0": 72.0, "y0": 120.0, "size": 18.0},
+            1: {"page_no": 3, "x0": 184.4, "y0": 41.4, "size": 20.0},
+            2: {"page_no": 6, "x0": 184.4, "y0": 41.4, "size": 20.0},
+            3: {"page_no": 8, "x0": 184.4, "y0": 41.4, "size": 20.0},
+        }
+        with mock.patch.object(cleanup, "extract_markdown_headings", return_value=fake_headings), mock.patch.object(
+            cleanup, "match_headings_to_source_lines", return_value=fake_matches
+        ):
+            cleaned = cleanup.remove_running_headers(source, context)
+        self.assertNotIn("#### Pure C English Overview", cleaned)
+        self.assertIn("Body one.", cleaned)
+        self.assertIn("Body two.", cleaned)
+        self.assertIn("Body three.", cleaned)
+
     def test_reference_entry_signatures_are_demoted_from_headings(self):
         source = "\n".join(
             [

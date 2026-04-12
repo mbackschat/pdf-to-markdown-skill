@@ -49,7 +49,9 @@ def remove_running_headers(
 
     counts = __import__("collections").Counter(text for _, text in heading_occurrences)
 
+    headings = []
     source_matches: dict[int, dict[str, float | str]] = {}
+    line_to_source: dict[int, dict[str, float | str]] = {}
     if context is not None:
         headings = extract_markdown_headings(md_text)
         if headings:
@@ -59,23 +61,45 @@ def remove_running_headers(
                 context.page_numbers,
                 style_cache=context.style_cache,
             )
+            line_to_source = {
+                headings[heading_idx].line_idx: source
+                for heading_idx, source in source_matches.items()
+            }
+
+    source_occurrences_by_text: dict[str, list[dict[str, float | str]]] = {}
+    for line_idx, text in heading_occurrences:
+        source = line_to_source.get(line_idx)
+        if source is not None:
+            source_occurrences_by_text.setdefault(text, []).append(source)
+
+    def is_consistent_top_banner(text: str) -> bool:
+        sources = source_occurrences_by_text.get(text, [])
+        if len(sources) < 3:
+            return False
+
+        y_positions = [float(source.get("y0", 9999.0)) for source in sources]
+        if any(y0 > 65.0 for y0 in y_positions):
+            return False
+        if max(y_positions) - min(y_positions) > 10.0:
+            return False
+
+        x_positions = [float(source.get("x0", 0.0)) for source in sources]
+        if x_positions and max(x_positions) - min(x_positions) > 30.0:
+            return False
+
+        page_numbers = [
+            int(source.get("page_no", idx + 1))
+            for idx, source in enumerate(sources)
+        ]
+        return len(set(page_numbers)) >= 3
 
     def is_banner_like(index: int) -> bool:
-        if source_matches:
-            matched_heading_idx = next(
-                (
-                    heading_idx
-                    for heading_idx, source in source_matches.items()
-                    if headings[heading_idx].line_idx == index
-                ),
-                None,
-            )
-            if matched_heading_idx is not None:
-                source = source_matches[matched_heading_idx]
-                y0 = float(source.get("y0", 9999.0))
-                size = float(source.get("size", 0.0))
-                if y0 <= 65.0 and size <= 15.5:
-                    return True
+        matched_text = next(
+            (text for line_idx, text in heading_occurrences if line_idx == index),
+            None,
+        )
+        if matched_text and is_consistent_top_banner(matched_text):
+            return True
 
         # Running headers usually sit alone at a page boundary and are immediately
         # followed by the real section heading rather than by body text.
