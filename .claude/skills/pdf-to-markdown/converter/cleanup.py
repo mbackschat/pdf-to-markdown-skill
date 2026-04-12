@@ -12,6 +12,7 @@ from .headings import (
     apply_outline_heading_levels,
     apply_visual_heading_levels,
     match_headings_to_source_lines,
+    promote_structured_plaintext_headings,
     extract_contents_outline_from_markdown,
     extract_contents_outline_from_pdf,
     get_cached_outline,
@@ -528,7 +529,7 @@ def cleanup_markdown(
                 style_cache=context.style_cache,
             )
 
-    md_text = normalize_reference_entry_headings(md_text, context)
+    md_text = promote_structured_plaintext_headings(md_text)
     md_text = remove_redundant_page_title_headings(md_text)
     md_text = clean_markdown_tables(md_text)
     md_text = fix_definition_bullets(md_text)

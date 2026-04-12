@@ -68,6 +68,18 @@ def regression_cases() -> list[dict[str, object]]:
             "checks": [
                 r"## The Little Black Bit Book\.",
                 r"## A 2\.5 Meg Socketed Ram Upgrade for the 1040ST",
+                r"## CHAPTER 3\. TROUBLESHOOTING",
+                r"#### 2\.2\.1 USER CONTROL NAMES AND OPERATIONS",
+            ],
+            "absent_checks": [
+                r"^## [^#\n]*POWER SWITCH$",
+                r"^## [^#\n]*BRIGHTNESS CONTROL$",
+                r"^## [^#\n]*CONTRAST CONTROL$",
+                r"^## [^#\n]*MODE SWITCH$",
+                r"^## PROBLEM$",
+                r"^## CHECK THESE ITEMS$",
+                r"^## Abnormal picture$",
+                r"^## CHAPTER 3\. TROUBLESHOOTING CHAPTER 4\. SPECIFICATIONS$",
             ],
         },
         {

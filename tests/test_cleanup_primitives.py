@@ -225,6 +225,105 @@ class HeadingCleanupTests(unittest.TestCase):
         self.assertNotIn("### OPCODE", cleaned)
         self.assertNotIn("### WORD Cauxis(VOID)", cleaned)
 
+    def test_structured_headings_survive_contents_page_match(self):
+        source = "\n".join(
+            [
+                "## CHAPTER 1. INTRODUCTION",
+                "",
+                "### 1.1 GENERAL INFORMATION",
+                "",
+                "## CHAPTER 2. USING THE MULTISYNC 3D",
+            ]
+        )
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        fake_headings = [
+            MarkdownHeading(0, "CHAPTER 1. INTRODUCTION", [], "chapter-1-introduction", 2),
+            MarkdownHeading(2, "1.1 GENERAL INFORMATION", [], "11-general-information", 3),
+            MarkdownHeading(4, "CHAPTER 2. USING THE MULTISYNC 3D", [], "chapter-2-using", 2),
+        ]
+        fake_matches = {
+            0: {"page_no": 100, "x0": 72.0, "y0": 135.8, "size": 14.0, "text": "CHAPTER 1.  INTRODUCTION"},
+            1: {"page_no": 100, "x0": 72.0, "y0": 151.7, "size": 12.0, "text": "1.1  GENERAL INFORMATION"},
+            2: {"page_no": 100, "x0": 72.0, "y0": 205.1, "size": 14.0, "text": "CHAPTER 2.  USING THE MULTISYNC 3D"},
+        }
+        fake_page_lines = [
+            {"x0": 72.0, "y0": 72.8, "size": 18.0, "text": "NEC Multisync 3D User's Manual"},
+            {"x0": 72.0, "y0": 102.9, "size": 14.0, "text": "TABLE OF CONTENTS"},
+            {"x0": 72.0, "y0": 135.8, "size": 14.0, "text": "CHAPTER 1.  INTRODUCTION"},
+            {"x0": 72.0, "y0": 151.7, "size": 12.0, "text": "1.1  GENERAL INFORMATION"},
+            {"x0": 72.0, "y0": 205.1, "size": 14.0, "text": "CHAPTER 2.  USING THE MULTISYNC 3D"},
+            {"x0": 72.0, "y0": 221.1, "size": 12.0, "text": "2.1  GETTING ACQUAINTED"},
+        ]
+        with mock.patch.object(
+            reference_entries, "extract_markdown_headings", return_value=fake_headings
+        ), mock.patch.object(
+            reference_entries, "match_headings_to_source_lines", return_value=fake_matches
+        ), mock.patch.object(
+            reference_entries, "extract_page_style_lines", return_value=fake_page_lines
+        ):
+            cleaned = reference_entries.normalize_reference_entry_headings(source, context)
+        self.assertIn("## CHAPTER 1. INTRODUCTION", cleaned)
+        self.assertIn("### 1.1 GENERAL INFORMATION", cleaned)
+
+    def test_dense_short_labels_are_demoted_from_headings(self):
+        source = "\n".join(
+            [
+                "#### 2.2.1 USER CONTROL NAMES AND OPERATIONS",
+                "",
+                "## POWER SWITCH",
+                "",
+                "## BRIGHTNESS CONTROL",
+            ]
+        )
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        fake_headings = [
+            MarkdownHeading(0, "2.2.1 USER CONTROL NAMES AND OPERATIONS", [], "221-user-control", 4),
+            MarkdownHeading(2, "POWER SWITCH", [], "power-switch", 2),
+            MarkdownHeading(4, "BRIGHTNESS CONTROL", [], "brightness-control", 2),
+        ]
+        fake_matches = {
+            0: {"page_no": 102, "x0": 72.0, "y0": 362.6, "size": 12.0, "text": "2.2.1 USER CONTROL NAMES AND OPERATIONS"},
+            1: {"page_no": 102, "x0": 72.0, "y0": 376.3, "size": 10.0, "text": "n POWER SWITCH"},
+            2: {"page_no": 102, "x0": 72.0, "y0": 406.2, "size": 10.0, "text": "o BRIGHTNESS CONTROL"},
+        }
+        fake_page_lines = [
+            {"x0": 72.0, "y0": 362.6, "size": 12.0, "text": "2.2.1 USER CONTROL NAMES AND OPERATIONS"},
+            {"x0": 72.0, "y0": 376.3, "size": 10.0, "text": "n POWER SWITCH"},
+            {"x0": 72.0, "y0": 406.2, "size": 10.0, "text": "o BRIGHTNESS CONTROL"},
+            {"x0": 72.0, "y0": 436.1, "size": 10.0, "text": "p CONTRAST CONTROL"},
+            {"x0": 72.0, "y0": 466.0, "size": 10.0, "text": "q COLOR SWITCH"},
+            {"x0": 72.0, "y0": 568.2, "size": 10.0, "text": "r MODE SWITCH"},
+            {"x0": 72.0, "y0": 72.0, "size": 8.0, "text": "Body"},
+            {"x0": 158.4, "y0": 495.7, "size": 8.0, "text": "COLOR MODE"},
+        ]
+        with mock.patch.object(
+            reference_entries, "extract_markdown_headings", return_value=fake_headings
+        ), mock.patch.object(
+            reference_entries, "match_headings_to_source_lines", return_value=fake_matches
+        ), mock.patch.object(
+            reference_entries, "extract_page_style_lines", return_value=fake_page_lines
+        ):
+            cleaned = reference_entries.normalize_reference_entry_headings(source, context)
+        self.assertIn("#### 2.2.1 USER CONTROL NAMES AND OPERATIONS", cleaned)
+        self.assertNotIn("## POWER SWITCH", cleaned)
+        self.assertIn("\nPOWER SWITCH\n", cleaned)
+        self.assertNotIn("## BRIGHTNESS CONTROL", cleaned)
+        self.assertTrue(cleaned.rstrip().endswith("BRIGHTNESS CONTROL"))
+
+    def test_unmatched_symbol_prefixed_label_run_is_demoted(self):
+        source = "\n".join(
+            [
+                "## � POWER SWITCH",
+                "",
+                "## � BRIGHTNESS CONTROL",
+            ]
+        )
+        cleaned = reference_entries.demote_unmatched_label_heading_runs(source, {})
+        self.assertNotIn("## � POWER SWITCH", cleaned)
+        self.assertNotIn("## � BRIGHTNESS CONTROL", cleaned)
+        self.assertIn("POWER SWITCH", cleaned)
+        self.assertIn("BRIGHTNESS CONTROL", cleaned)
+
 
 class ListingCleanupTests(unittest.TestCase):
     def test_merge_fenced_block_with_code_bullets(self):
@@ -259,6 +358,30 @@ class TocFallbackTests(unittest.TestCase):
             )
         )
         self.assertFalse(headings.looks_like_toc_title_only_line("Ends like prose."))
+
+    def test_promote_structured_plaintext_headings_is_conservative(self):
+        source = "\n".join(
+            [
+                "Intro paragraph.",
+                "",
+                "CHAPTER 1. INTRODUCTION",
+                "",
+                "1.1 GENERAL INFORMATION",
+                "",
+                "2.2.1 USER CONTROL NAMES AND OPERATIONS",
+                "",
+                "1. Make sure the power is off.",
+                "",
+                "Normal sentence without heading punctuation",
+                "",
+            ]
+        )
+        cleaned = headings.promote_structured_plaintext_headings(source)
+        self.assertIn("## CHAPTER 1. INTRODUCTION", cleaned)
+        self.assertIn("### 1.1 GENERAL INFORMATION", cleaned)
+        self.assertIn("#### 2.2.1 USER CONTROL NAMES AND OPERATIONS", cleaned)
+        self.assertIn("\n1. Make sure the power is off.\n", cleaned)
+        self.assertNotIn("## 1. Make sure the power is off.", cleaned)
 
 
 if __name__ == "__main__":

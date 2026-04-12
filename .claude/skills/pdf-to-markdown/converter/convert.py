@@ -9,8 +9,10 @@ import time
 from pathlib import Path
 
 from . import cleanup
+from .headings import extract_page_style_lines
 from .models import ConversionContext
 from .ocr import get_ocr_function, map_lang_codes, resolve_ocr_resolution
+from .reference_entries import looks_like_contents_page
 from .regions import restore_code_blocks_in_chunk
 from .text import sanitize_stem
 
@@ -138,6 +140,10 @@ def extract_markdown(
                 page_no,
                 context.geometry_cache,
             )
+            if looks_like_contents_page(
+                extract_page_style_lines(pdf_path, page_no, context.style_cache)
+            ):
+                continue
             page_texts.append(page_text.strip())
 
         for src in extraction_images_dir.iterdir():

@@ -567,6 +567,44 @@ def infer_heading_rank(text: str, original_level: int) -> int:
     return max(1, original_level - 1)
 
 
+def promote_structured_plaintext_headings(md_text: str) -> str:
+    """Promote standalone numbered/chapter plaintext lines to headings conservatively."""
+    lines = md_text.splitlines()
+    in_code = False
+    heading_re = re.compile(r"^(#{1,6})\s+")
+
+    def eligible(text: str) -> bool:
+        stripped = sanitize_contents_entry(strip_markdown_inline(text))
+        if not stripped or len(stripped) > 120:
+            return False
+        if stripped.endswith((".", "!", "?")):
+            return False
+        return bool(
+            re.match(r"^(chapter|appendix)\b", stripped, re.IGNORECASE)
+            or re.match(r"^(?:[A-Z]\.)?\d+(?:\.\d+)+\b", stripped)
+        )
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code or not stripped or stripped.startswith("|") or heading_re.match(stripped):
+            continue
+        if idx > 0 and lines[idx - 1].strip():
+            continue
+        if idx + 1 < len(lines) and lines[idx + 1].strip():
+            continue
+        if not eligible(stripped):
+            continue
+
+        rank = infer_heading_rank(stripped, 1)
+        level = min(6, 2 + max(0, rank - 1))
+        lines[idx] = f"{'#' * level} {stripped}"
+
+    return "\n".join(lines)
+
+
 def apply_visual_heading_levels(
     md_text: str,
     pdf_path: Path,
