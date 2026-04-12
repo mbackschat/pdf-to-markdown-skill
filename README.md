@@ -12,7 +12,12 @@ A [Claude Code skill](https://code.claude.com/docs/en/skills.md) that converts P
 - **Smart heading fix-up** -- detects and removes running headers; uses the document's Table of Contents to restore proper heading hierarchy
 - **TOC link conversion** -- contents pages are rewritten as clean bullet lists and linked to generated Markdown headings when possible
 - **Table extraction** -- register maps, pin tables, etc. rendered as proper Markdown tables
-- **Code preservation** -- code listings kept as fenced code blocks, with line breaks restored from `pdftotext -layout` when available
+- **Region-based structure recovery** -- positioned page text is grouped into structural regions before rendering
+- **Language-agnostic preformatted detection** -- listings are recovered from layout signals rather than C-specific keywords
+- **Code preservation** -- preformatted listings are kept as fenced blocks, with line breaks and indentation restored from page geometry when available
+- **Layout-aware listing repair** -- two-column command/description layouts and aligned preformatted regions are reconstructed from positioned page text when possible
+- **Geometry fallback** -- if `pdftotext -bbox-layout` fails or is unavailable, PyMuPDF word positions are used as a second layout source
+- **Cross-page listing merge** -- adjacent fenced blocks from the same logical listing are merged when only page/chunk boundaries separate them
 - **Page range selection** -- convert only a subset of pages with `--pages`
 - **Multi-language OCR** -- pass `--langs` with comma-separated language codes (default: `en`)
 
@@ -20,11 +25,11 @@ A [Claude Code skill](https://code.claude.com/docs/en/skills.md) that converts P
 
 - [uv](https://docs.astral.sh/uv/) (the script runs with `uv run` -- no global Python packages needed)
 - Python 3.10+
-- `pdftotext` from Poppler/Xpdf (optional, but recommended to preserve multi-line code listings)
+- `pdftotext` from Poppler/Xpdf (optional, but recommended as the first geometry source for structured listings)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI, desktop app, or IDE extension
 
 The first run will be slower as `uv` downloads the Python dependencies.
-If `pdftotext` is installed, the script also uses it to restore line breaks in flattened code-like blocks.
+If `pdftotext` is installed, the script uses it as the primary geometry source for structured listing recovery; otherwise it falls back to PyMuPDF word positions.
 
 ## Installation
 
@@ -87,7 +92,7 @@ Convert a German-language document:
 | `--ocr` / `--scan` | Enable forced full-page OCR (for scanned PDFs). Off by default. |
 | `--ocr-engine` | `auto` (default), `mac`, `rapidocr`, `tesseract` |
 | `--langs` | Comma-separated language codes (default: `en`) |
-| `--threads` | Number of CPU threads (default: 4) |
+| `--threads` | Compatibility flag retained for the skill interface; currently unused |
 
 ## Output
 
@@ -103,7 +108,8 @@ Convert a German-language document:
   skills/
     pdf-to-markdown/
       SKILL.md              # Skill definition (frontmatter + instructions for Claude)
-      pdf_to_markdown.py    # PyMuPDF4LLM-based conversion script (PEP 723 inline metadata)
+      pdf_to_markdown.py    # PyMuPDF4LLM-based conversion script with region-based repair
+CLAUDE.md                   # Repo-level notes, architecture summary, and known limitations
 ```
 
 ## License

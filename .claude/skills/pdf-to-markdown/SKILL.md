@@ -7,7 +7,14 @@ allowed-tools: Bash(uv run:*), Read
 
 Convert PDF files to Markdown using PyMuPDF4LLM. Optimized for technical documentation (datasheets, hardware manuals, programming guides) with tables, diagrams, and code listings. By default, OCR is off for digital PDFs. Pass `--ocr` or `--scan` for scanned documents.
 
-The converter also applies post-processing to improve headings, contents pages, tables, and flattened code listings.
+The converter also applies post-processing to improve headings, contents pages, tables, lists, and flattened preformatted listings.
+
+It also performs a region-based structural repair pass that can reconstruct:
+
+- two-column command/description layouts
+- aligned preformatted listings
+- indented syntax and file-list examples
+- multi-page listings that were split only by chunk/page boundaries
 
 Repository-wide implementation notes and current limitations live in the root `CLAUDE.md`.
 
@@ -66,7 +73,7 @@ uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/german_doc.pdf" --langs 
 | `--ocr` / `--scan` | Enable forced full-page OCR (for scanned PDFs). Use when user says "scanned", "scan", or "ocr". Off by default. |
 | `--ocr-engine` | `auto` (default), `mac`, `rapidocr`, `tesseract` |
 | `--langs` | Comma-separated language codes (default: `en`) |
-| `--threads` | Number of CPU threads (default: 4) |
+| `--threads` | Compatibility flag kept for the skill interface; currently unused |
 
 ## Output
 
@@ -80,5 +87,6 @@ uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/german_doc.pdf" --langs 
 - First run downloads PyMuPDF4LLM and OCR dependencies; subsequent runs are fast
 - Requires only `uv` and Python 3.10+
 - On macOS, `auto` prefers Apple Vision via `ocrmac`; elsewhere it prefers RapidOCR
-- If `pdftotext` is installed, the script uses it to restore line breaks in flattened code listings
+- If `pdftotext` is installed, the script uses it as the primary geometry source for structured listing recovery
+- If `pdftotext` is unavailable or fails, the script falls back to PyMuPDF word positions for structured listing recovery
 - Internal TOC links work best on full-document conversions; partial page ranges may leave some entries unlinked

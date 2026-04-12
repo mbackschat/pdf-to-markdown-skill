@@ -11,6 +11,10 @@ This repository contains a Claude Code skill that converts PDFs to Markdown.
   - macOS: Apple Vision via `ocrmac`
   - other platforms: RapidOCR
   - explicit fallback: Tesseract
+- Structured repair model:
+  - build layout-aware regions from positioned page text
+  - classify regions by structural signals
+  - render regions as prose, preformatted blocks, or tables
 
 ## Markdown Quality Improvements
 
@@ -23,20 +27,26 @@ Current cleanup includes:
 - conversion of noisy contents pages into bullet lists
 - conversion of matching contents entries into internal Markdown links
 - table cleanup for OCR-heavy or malformed tables
-- code-block recovery using `pdftotext -bbox-layout` when available
+- language-agnostic preformatted recovery using page geometry instead of language-specific token checks
+- layout-aware reconstruction of structured listings from positioned lines and words
+- fallback to PyMuPDF word geometry when `pdftotext -bbox-layout` is unavailable or fails
+- merging of adjacent fenced blocks when a logical listing was split only by page/chunk boundaries
 - relative image path rewriting
 - spacing and punctuation normalization for extracted prose
-- better handling of flattened option lists and definition-like bullets
+- better handling of flattened option lists, inline bullet runs, and definition-like bullets
 
-## Code Listings
+## Structured Listings
 
-One of the main fixes in this repo is for flattened code listings from digital PDFs.
+One of the main focuses in this repo is preserving preformatted regions from digital PDFs.
 
-- PyMuPDF4LLM can flatten some preformatted regions into one line
-- when `pdftotext` is installed, the script recovers original line breaks from page layout coordinates
-- recovered blocks are emitted as fenced code blocks
+- PyMuPDF4LLM can flatten some preformatted regions or split one logical listing across page chunks
+- the current script reconstructs listings from layout geometry first, not from language-specific code markers
+- when `pdftotext` is installed, it is used as the primary geometry source
+- if `pdftotext` fails, PyMuPDF word positions are used as a fallback geometry source
+- recovered preformatted blocks are emitted as fenced code blocks
+- adjacent fenced blocks are merged when they are separated only by chunk/page boundaries
 
-This notably improves manuals with compiler options, command syntax, and programming listings.
+This notably improves manuals with compiler options, command syntax, project-file formats, and multi-page program listings.
 
 ## Contents / TOC Behavior
 
@@ -54,7 +64,9 @@ This works best on full-document conversions. Partial page-range conversions may
 - scanned PDFs still depend on OCR quality, so spelling and segmentation errors can remain
 - complex contents pages may still contain occasional awkward splits when the source PDF is highly flattened
 - internal TOC links only work when the corresponding heading survives extraction
-- `pdftotext` is optional but strongly recommended for better preformatted/code recovery
+- `pdftotext` is optional but still the strongest geometry source for many structured listings
+- some non-code structured regions, especially heavily flattened inline bullet lists, can still need additional cleanup after extraction
+- `--threads` is kept for interface compatibility but is currently unused
 
 ## Sample PDFs Used During Validation
 
