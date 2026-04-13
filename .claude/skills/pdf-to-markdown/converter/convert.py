@@ -152,6 +152,9 @@ def convert_pdf(
     auto_ocr_requested: bool,
     ocr_engine: str,
     langs: list[str],
+    skip_heading_pipeline: bool,
+    skip_text_cleanup: bool,
+    skip_all_cleanup: bool,
     batch_mode: bool,
     file_idx: int | None = None,
     total_files: int | None = None,
@@ -204,6 +207,9 @@ def convert_pdf(
     print(f"  Auto OCR:      {auto_ocr_requested}")
     print(f"  OCR active:    {ocr_resolution.enabled}")
     print(f"  OCR backend:   {ocr_resolution.backend or 'disabled'}")
+    print(f"  Skip headings: {skip_heading_pipeline}")
+    print(f"  Skip text:     {skip_text_cleanup}")
+    print(f"  Raw cleanup:   {skip_all_cleanup}")
 
     start_time = time.time()
     print("\nConverting...", flush=True)
@@ -225,6 +231,9 @@ def convert_pdf(
         images_dir,
         output_path,
         source_images_dir=extracted_images_dir,
+        skip_heading_pipeline=skip_heading_pipeline,
+        skip_text_cleanup=skip_text_cleanup,
+        skip_all_cleanup=skip_all_cleanup,
     )
     output_path.write_text(md_text, encoding="utf-8")
 
@@ -271,6 +280,9 @@ def run_cli(args) -> int:
                 auto_ocr_requested=args.auto_ocr,
                 ocr_engine=args.ocr_engine,
                 langs=langs,
+                skip_heading_pipeline=args.skip_heading_pipeline,
+                skip_text_cleanup=args.skip_text_cleaning,
+                skip_all_cleanup=args.skip_all_cleanup,
                 batch_mode=len(pdf_files) > 1,
                 file_idx=file_idx,
                 total_files=len(pdf_files),

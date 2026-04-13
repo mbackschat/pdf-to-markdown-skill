@@ -88,6 +88,21 @@ Convert a German-language document:
 /pdf-to-markdown /path/to/german_doc.pdf --langs de,en
 ```
 
+Bypass heading reconstruction but keep other cleanup:
+```
+/pdf-to-markdown /path/to/manual.pdf --skip-heading-pipeline
+```
+
+Keep heading reconstruction but bypass prose/table cleanup:
+```
+/pdf-to-markdown /path/to/manual.pdf --skip-text-cleaning
+```
+
+Write near-raw extracted markdown while still fixing image references:
+```
+/pdf-to-markdown /path/to/manual.pdf --skip-all-cleanup
+```
+
 ### Flags
 
 | Flag | Description |
@@ -99,6 +114,9 @@ Convert a German-language document:
 | `--ocr-engine` | `auto` (default), `mac`, `rapidocr`, `tesseract` |
 | `--langs` | Comma-separated language codes (default: `en`) |
 | `--threads` | Compatibility flag retained for the skill interface; currently unused |
+| `--skip-heading-pipeline` | Bypass heading reconstruction and heading-specific cleanup |
+| `--skip-text-cleaning` | Bypass prose/table/bullet cleanup while keeping heading reconstruction |
+| `--skip-all-cleanup` | Bypass all optional post-processing; image references are still rewritten |
 
 ## Output
 

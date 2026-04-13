@@ -62,6 +62,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=4,
         help="Unused compatibility flag kept for the existing skill interface",
     )
+    parser.add_argument(
+        "--skip-heading-pipeline",
+        action="store_true",
+        help="Bypass heading reconstruction and heading-specific cleanup",
+    )
+    parser.add_argument(
+        "--skip-text-cleaning",
+        action="store_true",
+        help="Bypass prose/table/bullet cleanup while keeping heading reconstruction",
+    )
+    parser.add_argument(
+        "--skip-all-cleanup",
+        action="store_true",
+        help="Bypass all optional post-processing and keep near-raw extracted Markdown",
+    )
     return parser
 
 

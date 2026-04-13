@@ -510,20 +510,62 @@ def dedupe_adjacent_bullets(md_text: str) -> str:
 
     return "\n".join(result)
 
+
+def escape_literal_angle_brackets(md_text: str) -> str:
+    """Escape literal angle-bracket tokens while preserving intentional HTML line breaks."""
+    lines = md_text.splitlines()
+    result: list[str] = []
+    in_code = False
+    allowed_tags = {"br", "/br"}
+
+    def replace_token(match: re.Match[str]) -> str:
+        token = match.group(1).strip()
+        lower = token.lower()
+        if lower in allowed_tags:
+            return match.group(0)
+        if "://" in token or (token.startswith("www.") and " " not in token):
+            return match.group(0)
+        if "@" in token and " " not in token:
+            return match.group(0)
+        return f"&lt;{token}&gt;"
+
+    token_re = re.compile(r"<([^<>\n]{1,80})>")
+
+    for line in lines:
+        if line.startswith("```"):
+            in_code = not in_code
+            result.append(line)
+            continue
+        if in_code:
+            result.append(line)
+            continue
+        result.append(token_re.sub(replace_token, line))
+
+    return "\n".join(result)
+
+
 def cleanup_markdown(
     md_text: str,
     context: ConversionContext,
     images_dir: Path,
     output_path: Path,
     source_images_dir: Path | None = None,
+    *,
+    skip_heading_pipeline: bool = False,
+    skip_text_cleanup: bool = False,
+    skip_all_cleanup: bool = False,
 ) -> str:
     """Apply markdown cleanup after extraction."""
-    md_text = apply_heading_pipeline(md_text, context)
-    md_text = apply_text_cleanup_pipeline(md_text)
-    md_text = normalize_reference_entry_headings(md_text, context)
-    md_text = strip_contents_sections(md_text)
-    md_text = merge_fenced_block_with_code_bullets(md_text)
-    md_text = merge_adjacent_fenced_blocks(md_text)
+    if not skip_all_cleanup:
+        if not skip_heading_pipeline:
+            md_text = apply_heading_pipeline(md_text, context)
+            md_text = normalize_reference_entry_headings(md_text, context)
+            md_text = strip_contents_sections(md_text)
+        if not skip_text_cleanup:
+            md_text = apply_text_cleanup_pipeline(md_text)
+        md_text = merge_fenced_block_with_code_bullets(md_text)
+        md_text = merge_adjacent_fenced_blocks(md_text)
+        md_text = escape_literal_angle_brackets(md_text)
     md_text = make_image_refs_relative(
         md_text,
         images_dir,

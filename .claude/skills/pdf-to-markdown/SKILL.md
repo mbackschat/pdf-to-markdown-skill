@@ -1,7 +1,7 @@
 ---
 name: pdf-to-markdown
 description: Convert PDF files to Markdown using a PyMuPDF4LLM digital-first pipeline with explicit OCR flags for scanned or image-only documents. Use when user wants to convert PDF documentation to markdown.
-argument-hint: <pdf-path-or-folder> [--ocr|--scan] [--auto-ocr] [--output FILE] [--pages RANGE] [--ocr-engine ENGINE] [--langs LANGS] [--threads N]
+argument-hint: <pdf-path-or-folder> [--ocr|--scan] [--auto-ocr] [--output FILE] [--pages RANGE] [--ocr-engine ENGINE] [--langs LANGS] [--skip-heading-pipeline|--skip-text-cleaning|--skip-all-cleanup]
 allowed-tools: Bash(uv run:*), Read
 ---
 
@@ -71,6 +71,21 @@ Convert a document with multiple languages:
 uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/german_doc.pdf" --langs en,de
 ```
 
+Bypass heading reconstruction:
+```bash
+uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/manual.pdf" --skip-heading-pipeline
+```
+
+Bypass prose/table cleanup:
+```bash
+uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/manual.pdf" --skip-text-cleaning
+```
+
+Bypass all optional post-processing:
+```bash
+uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/manual.pdf" --skip-all-cleanup
+```
+
 ## Flags
 
 | Flag | Description |
@@ -82,6 +97,9 @@ uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/german_doc.pdf" --langs 
 | `--ocr-engine` | `auto` (default), `mac`, `rapidocr`, `tesseract` |
 | `--langs` | Comma-separated language codes (default: `en`) |
 | `--threads` | Compatibility flag kept for the skill interface; currently unused |
+| `--skip-heading-pipeline` | Bypass heading reconstruction and heading-specific cleanup |
+| `--skip-text-cleaning` | Bypass prose/table/bullet cleanup while keeping heading reconstruction |
+| `--skip-all-cleanup` | Bypass all optional post-processing; image paths are still rewritten |
 
 ## Output
 

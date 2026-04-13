@@ -89,6 +89,107 @@ class ImageOutputTests(unittest.TestCase):
 
 
 class HeadingCleanupTests(unittest.TestCase):
+    def test_escape_literal_angle_brackets_preserves_br_and_code_blocks(self):
+        source = "\n".join(
+            [
+                "Press <b> or <F1>.",
+                "**----- Start of picture text -----**<br>",
+                "Code sample:",
+                "```",
+                "if key == <b>:",
+                "```",
+                "Visit <https://example.com> or write <help@example.com>.",
+            ]
+        )
+
+        cleaned = cleanup.escape_literal_angle_brackets(source)
+        self.assertIn("Press &lt;b&gt; or &lt;F1&gt;.", cleaned)
+        self.assertIn("**----- Start of picture text -----**<br>", cleaned)
+        self.assertIn("if key == <b>:", cleaned)
+        self.assertIn("<https://example.com>", cleaned)
+        self.assertIn("<help@example.com>", cleaned)
+
+    def test_cleanup_markdown_can_skip_heading_pipeline(self):
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            output_path = tmp_path / "out.md"
+            images_dir = tmp_path / "images"
+            images_dir.mkdir()
+
+            with mock.patch.object(cleanup, "apply_heading_pipeline", side_effect=AssertionError("heading pipeline called")), mock.patch.object(
+                cleanup, "normalize_reference_entry_headings", side_effect=AssertionError("reference cleanup called")
+            ), mock.patch.object(cleanup, "strip_contents_sections", side_effect=AssertionError("contents stripping called")), mock.patch.object(
+                cleanup, "apply_text_cleanup_pipeline", return_value="text-cleaned"
+            ), mock.patch.object(cleanup, "merge_fenced_block_with_code_bullets", side_effect=lambda text: text), mock.patch.object(
+                cleanup, "merge_adjacent_fenced_blocks", side_effect=lambda text: text
+            ), mock.patch.object(cleanup, "escape_literal_angle_brackets", side_effect=lambda text: text), mock.patch.object(
+                cleanup, "make_image_refs_relative", side_effect=lambda text, *_args, **_kwargs: text
+            ):
+                cleaned = cleanup.cleanup_markdown(
+                    "original",
+                    context,
+                    images_dir,
+                    output_path,
+                    skip_heading_pipeline=True,
+                )
+
+        self.assertEqual(cleaned, "text-cleaned\n")
+
+    def test_cleanup_markdown_can_skip_text_cleanup(self):
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            output_path = tmp_path / "out.md"
+            images_dir = tmp_path / "images"
+            images_dir.mkdir()
+
+            with mock.patch.object(cleanup, "apply_heading_pipeline", return_value="heading-cleaned"), mock.patch.object(
+                cleanup, "normalize_reference_entry_headings", side_effect=lambda text, _context: text + "\nref"
+            ), mock.patch.object(cleanup, "strip_contents_sections", side_effect=lambda text: text + "\nstripped"), mock.patch.object(
+                cleanup, "apply_text_cleanup_pipeline", side_effect=AssertionError("text cleanup called")
+            ), mock.patch.object(cleanup, "merge_fenced_block_with_code_bullets", side_effect=lambda text: text), mock.patch.object(
+                cleanup, "merge_adjacent_fenced_blocks", side_effect=lambda text: text
+            ), mock.patch.object(cleanup, "escape_literal_angle_brackets", side_effect=lambda text: text), mock.patch.object(
+                cleanup, "make_image_refs_relative", side_effect=lambda text, *_args, **_kwargs: text
+            ):
+                cleaned = cleanup.cleanup_markdown(
+                    "original",
+                    context,
+                    images_dir,
+                    output_path,
+                    skip_text_cleanup=True,
+                )
+
+        self.assertEqual(cleaned, "heading-cleaned\nref\nstripped\n")
+
+    def test_cleanup_markdown_can_skip_all_cleanup(self):
+        context = ConversionContext(pdf_path=Path("dummy.pdf"), page_numbers=None)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            output_path = tmp_path / "out.md"
+            images_dir = tmp_path / "images"
+            images_dir.mkdir()
+
+            with mock.patch.object(cleanup, "apply_heading_pipeline", side_effect=AssertionError("heading pipeline called")), mock.patch.object(
+                cleanup, "normalize_reference_entry_headings", side_effect=AssertionError("reference cleanup called")
+            ), mock.patch.object(cleanup, "strip_contents_sections", side_effect=AssertionError("contents stripping called")), mock.patch.object(
+                cleanup, "apply_text_cleanup_pipeline", side_effect=AssertionError("text cleanup called")
+            ), mock.patch.object(cleanup, "merge_fenced_block_with_code_bullets", side_effect=AssertionError("merge code bullets called")), mock.patch.object(
+                cleanup, "merge_adjacent_fenced_blocks", side_effect=AssertionError("merge blocks called")
+            ), mock.patch.object(cleanup, "escape_literal_angle_brackets", side_effect=AssertionError("angle bracket cleanup called")), mock.patch.object(
+                cleanup, "make_image_refs_relative", side_effect=lambda text, *_args, **_kwargs: text
+            ):
+                cleaned = cleanup.cleanup_markdown(
+                    "original",
+                    context,
+                    images_dir,
+                    output_path,
+                    skip_all_cleanup=True,
+                )
+
+        self.assertEqual(cleaned, "original\n")
+
     def test_remove_running_headers_keeps_real_heading_depth(self):
         source = "\n".join(
             [

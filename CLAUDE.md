@@ -87,6 +87,16 @@ At a high level the current pipeline is:
 7. Strip visible contents sections from final markdown output.
 8. Rewrite image paths and finalize output.
 
+Optional bypass flags exist for debugging and comparison:
+
+- `--skip-heading-pipeline`
+  - skip heading reconstruction, heading cleanup, reference-entry normalization, and contents stripping
+- `--skip-text-cleaning`
+  - skip prose/table/bullet cleanup but keep heading reconstruction
+- `--skip-all-cleanup`
+  - skip all optional post-processing and keep the extracted markdown as raw as practical
+  - image references are still rewritten so extracted image links stay usable
+
 Important design choice:
 
 - visible contents pages are mainly treated as internal structure data
