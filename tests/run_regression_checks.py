@@ -58,14 +58,24 @@ def run_case(case: dict[str, object]) -> bool:
         return False
 
     md_text = output_path.read_text(encoding="utf-8")
+    failures: list[str] = []
     for pattern in case["checks"]:
         if not re.search(pattern, md_text, flags=re.MULTILINE):
-            print(f"FAIL {case['name']}: missing pattern {pattern}")
-            return False
+            failures.append(f"missing pattern {pattern}")
     for pattern in case.get("absent_checks", []):
         if re.search(pattern, md_text, flags=re.MULTILINE):
-            print(f"FAIL {case['name']}: unexpected pattern {pattern}")
-            return False
+            failures.append(f"unexpected pattern {pattern}")
+
+    if case.get("expected_failure"):
+        if failures:
+            print(f"XFAIL {case['name']}: {failures[0]}")
+            return True
+        print(f"XPASS {case['name']}: expected failure no longer fails")
+        return False
+
+    if failures:
+        print(f"FAIL {case['name']}: {failures[0]}")
+        return False
 
     print(f"PASS {case['name']}")
     return True

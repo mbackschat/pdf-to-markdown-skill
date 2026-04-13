@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .headings import extract_markdown_headings, extract_page_style_lines, match_headings_to_source_lines
+from .document import extract_page_style_lines
+from .headings import extract_markdown_headings, match_headings_to_source_lines
 from .models import ConversionContext
-from .text import looks_like_contents_heading, sanitize_contents_entry
+from .page_types import looks_like_contents_page
+from .text import sanitize_contents_entry
 
 REFERENCE_ENTRY_TITLE_MIN_SIZE = 16.0
 REFERENCE_ENTRY_LEFT_X_MAX = 90.0
@@ -22,14 +24,13 @@ REFERENCE_ENTRY_SIGNATURE_MIN_SIZE_DROP = 3.0
 REFERENCE_ENTRY_SIGNATURE_X_TOLERANCE = 18.0
 REFERENCE_ENTRY_FIELD_TITLE_MAX_SIZE = 12.5
 REFERENCE_ENTRY_FIELD_TITLE_MAX_WORDS = 4
-CONTENTS_ENTRY_MAX_SIZE = 14.5
-CONTENTS_ENTRY_MIN_COUNT = 4
 DENSE_LABEL_MAX_SIZE = 10.5
 DENSE_LABEL_MAX_LEN = 42
 DENSE_LABEL_MIN_COUNT = 6
 DENSE_LABEL_CLUSTER_TOLERANCE = 20.0
 DENSE_LABEL_MIN_CLUSTERS = 2
 UNMATCHED_LABEL_MAX_LEN = 40
+CAPTION_HEADING_MAX_SIZE = 12.5
 
 
 def normalized_token(text: str) -> str:
@@ -152,33 +153,6 @@ def looks_like_signature_for_title(
     return bool(title_token and line_token and title_token in line_token)
 
 
-def looks_like_contents_page(lines: list[dict[str, float | str]]) -> bool:
-    """Return True when the source page is a visible contents page."""
-    heading_idx = next(
-        (idx for idx, line in enumerate(lines) if looks_like_contents_heading(str(line.get("text", "")))),
-        None,
-    )
-    if heading_idx is None:
-        return False
-
-    entries = 0
-    for line in lines[heading_idx + 1 :]:
-        text = sanitize_contents_entry(str(line.get("text", "")))
-        if not text:
-            continue
-        if float(line.get("size", 9999.0)) > CONTENTS_ENTRY_MAX_SIZE:
-            continue
-        if len(text) > 110:
-            continue
-        if text.endswith((".", "!", "?")):
-            continue
-        if not re.search(r"[A-Za-z]", text):
-            continue
-        entries += 1
-
-    return entries >= CONTENTS_ENTRY_MIN_COUNT
-
-
 def looks_like_dense_short_label(
     line: dict[str, float | str],
     page_lines: list[dict[str, float | str]],
@@ -287,6 +261,42 @@ def demote_unmatched_label_heading_runs(
     return "\n".join(lines)
 
 
+def next_nonblank_line(lines: list[str], start_idx: int) -> str:
+    """Return the next nonblank line after start_idx, or an empty string."""
+    for idx in range(start_idx + 1, len(lines)):
+        if lines[idx].strip():
+            return lines[idx].strip()
+    return ""
+
+
+def looks_like_captionish_heading_context(
+    heading_text: str,
+    source: dict[str, float | str] | None,
+    next_line: str,
+) -> bool:
+    """Return True when a heading behaves like a caption or local label, not hierarchy."""
+    if looks_like_structured_body_heading_text(heading_text):
+        return False
+    if not source:
+        return False
+    if float(source.get("size", 9999.0)) > CAPTION_HEADING_MAX_SIZE:
+        return False
+    if not next_line:
+        return False
+
+    if heading_text.endswith(":") and (
+        next_line.startswith("- ")
+        or next_line.startswith("|")
+        or next_line.startswith("```")
+    ):
+        return True
+
+    if next_line.startswith("|") or next_line.startswith("![]("):
+        return True
+
+    return False
+
+
 def normalize_reference_entry_headings(
     md_text: str,
     context: ConversionContext,
@@ -318,7 +328,7 @@ def normalize_reference_entry_headings(
 
     page_cache: dict[int, list[dict[str, float | str]]] = {}
     page_is_reference: dict[int, bool] = {}
-    page_is_contents: dict[int, bool] = {}
+    page_contents_flags: dict[int, bool] = {}
     lines = md_text.splitlines()
     reference_titles_by_page: dict[int, list[dict[str, float | str]]] = {}
 
@@ -338,7 +348,7 @@ def normalize_reference_entry_headings(
                 context.style_cache,
             )
             page_is_reference[page_no] = page_looks_like_reference_entries(page_cache[page_no])
-            page_is_contents[page_no] = looks_like_contents_page(page_cache[page_no])
+            page_contents_flags[page_no] = looks_like_contents_page(page_cache[page_no])
 
         if page_is_reference.get(page_no) and looks_like_reference_entry_title(source):
             reference_titles_by_page.setdefault(page_no, []).append(source)
@@ -355,14 +365,19 @@ def normalize_reference_entry_headings(
                     context.style_cache,
                 )
                 page_is_reference[page_no] = page_looks_like_reference_entries(page_cache[page_no])
-                page_is_contents[page_no] = looks_like_contents_page(page_cache[page_no])
+                page_contents_flags[page_no] = looks_like_contents_page(page_cache[page_no])
 
-            if page_is_contents.get(page_no):
+            if page_contents_flags.get(page_no):
                 if not looks_like_structured_body_heading_text(heading.text):
                     lines[heading.line_idx] = heading.text
                     continue
 
             if looks_like_dense_short_label(source, page_cache[page_no]):
+                lines[heading.line_idx] = heading.text
+                continue
+
+            next_line = next_nonblank_line(lines, heading.line_idx)
+            if looks_like_captionish_heading_context(heading.text, source, next_line):
                 lines[heading.line_idx] = heading.text
                 continue
 

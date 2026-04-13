@@ -8,15 +8,9 @@ from urllib.parse import quote
 
 from .contents_cleanup import convert_contents_tables_to_lists, expand_contents_paragraphs
 from .headings import (
-    apply_contents_heading_levels,
-    apply_outline_heading_levels,
-    apply_visual_heading_levels,
     match_headings_to_source_lines,
-    promote_structured_plaintext_headings,
-    extract_contents_outline_from_markdown,
-    extract_contents_outline_from_pdf,
-    get_cached_outline,
     extract_markdown_headings,
+    reconstruct_heading_structure,
     strip_contents_sections,
 )
 from .models import ConversionContext
@@ -524,43 +518,8 @@ def cleanup_markdown(
     source_images_dir: Path | None = None,
 ) -> str:
     """Apply markdown cleanup after extraction."""
-    pdf_path = context.pdf_path
-    page_numbers = context.page_numbers
-
-    md_text = cleanup_heading_markup(md_text)
-    md_text = remove_running_headers(md_text, context)
-    md_text = convert_contents_tables_to_lists(md_text)
-    md_text = expand_contents_paragraphs(md_text)
-
-    pdf_outline = get_cached_outline(context)
-    if pdf_outline:
-        md_text = apply_outline_heading_levels(md_text, pdf_outline)
-    else:
-        contents_outline = extract_contents_outline_from_pdf(
-            pdf_path,
-            page_numbers,
-            style_cache=context.style_cache,
-        )
-        if not contents_outline:
-            contents_outline = extract_contents_outline_from_markdown(md_text)
-        if contents_outline:
-            md_text = apply_contents_heading_levels(md_text, contents_outline)
-        else:
-            md_text = apply_visual_heading_levels(
-                md_text,
-                pdf_path,
-                page_numbers,
-                style_cache=context.style_cache,
-            )
-
-    md_text = promote_structured_plaintext_headings(md_text)
-    md_text = remove_redundant_page_title_headings(md_text)
-    md_text = clean_markdown_tables(md_text)
-    md_text = fix_definition_bullets(md_text)
-    md_text = normalize_prose_lines(md_text)
-    md_text = split_option_bullet_runs(md_text)
-    md_text = split_inline_bullet_runs(md_text)
-    md_text = dedupe_adjacent_bullets(md_text)
+    md_text = apply_heading_pipeline(md_text, context)
+    md_text = apply_text_cleanup_pipeline(md_text)
     md_text = normalize_reference_entry_headings(md_text, context)
     md_text = strip_contents_sections(md_text)
     md_text = merge_fenced_block_with_code_bullets(md_text)
@@ -572,4 +531,26 @@ def cleanup_markdown(
         source_images_dir=source_images_dir,
     )
     md_text = re.sub(r"\n{3,}", "\n\n", md_text).strip() + "\n"
+    return md_text
+
+
+def apply_heading_pipeline(md_text: str, context: ConversionContext) -> str:
+    """Apply heading-focused cleanup and hierarchy reconstruction."""
+    md_text = cleanup_heading_markup(md_text)
+    md_text = remove_running_headers(md_text, context)
+    md_text = convert_contents_tables_to_lists(md_text)
+    md_text = expand_contents_paragraphs(md_text)
+    md_text = reconstruct_heading_structure(md_text, context)
+    md_text = remove_redundant_page_title_headings(md_text)
+    return md_text
+
+
+def apply_text_cleanup_pipeline(md_text: str) -> str:
+    """Apply non-heading markdown cleanup after structure is decided."""
+    md_text = clean_markdown_tables(md_text)
+    md_text = fix_definition_bullets(md_text)
+    md_text = normalize_prose_lines(md_text)
+    md_text = split_option_bullet_runs(md_text)
+    md_text = split_inline_bullet_runs(md_text)
+    md_text = dedupe_adjacent_bullets(md_text)
     return md_text

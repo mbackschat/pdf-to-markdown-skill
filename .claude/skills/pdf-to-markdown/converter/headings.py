@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .document import (
+    extract_page_style_lines,
+    extract_pdf_outline,
+    get_cached_outline,
+    get_pdf_page_count,
+    selected_pages_1based,
+)
 from .models import ConversionContext, MarkdownHeading, OutlineEntry
 from .text import (
     PAGE_MARKER_RE,
@@ -14,83 +21,6 @@ from .text import (
     slugify_heading,
     strip_markdown_inline,
 )
-
-
-def extract_page_style_lines(
-    pdf_path: Path,
-    page_no: int,
-    style_cache: dict[int, list[dict[str, float | str]]],
-) -> list[dict[str, float | str]]:
-    """Extract positioned lines plus font-size metadata using PyMuPDF text dict output."""
-    import pymupdf
-
-    cache_key = page_no
-    if cache_key in style_cache:
-        return style_cache[cache_key]
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        page = doc.load_page(page_no - 1)
-        data = page.get_text("dict")
-    finally:
-        doc.close()
-
-    lines: list[dict[str, float | str]] = []
-    for block in data.get("blocks", []):
-        for line in block.get("lines", []):
-            spans = [span for span in line.get("spans", []) if str(span.get("text", "")).strip()]
-            if not spans:
-                continue
-
-            text = "".join(str(span.get("text", "")) for span in spans).strip()
-            if not text:
-                continue
-
-            bbox = line.get("bbox", (0, 0, 0, 0))
-            lines.append(
-                {
-                    "x0": float(bbox[0]),
-                    "y0": float(bbox[1]),
-                    "x1": float(bbox[2]),
-                    "y1": float(bbox[3]),
-                    "text": text,
-                    "size": max(float(span.get("size", 0.0)) for span in spans),
-                    "flags": max(int(span.get("flags", 0)) for span in spans),
-                }
-            )
-
-    style_cache[cache_key] = lines
-    return lines
-
-
-def extract_pdf_outline(pdf_path: Path, page_numbers: list[int] | None = None) -> list[OutlineEntry]:
-    """Read the PDF outline/bookmark tree, optionally filtered to selected pages."""
-    import pymupdf
-
-    selected_pages = {page + 1 for page in page_numbers} if page_numbers is not None else None
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        outline = doc.get_toc()
-    finally:
-        doc.close()
-    entries: list[OutlineEntry] = []
-
-    for level, title, page in outline:
-        cleaned_title = sanitize_contents_entry(title)
-        if not cleaned_title or looks_like_contents_heading(cleaned_title):
-            continue
-        if selected_pages is not None and page not in selected_pages:
-            continue
-        entries.append(OutlineEntry(level=level, title=cleaned_title, page=page))
-
-    return entries
-
-
-def get_cached_outline(context: ConversionContext) -> list[OutlineEntry]:
-    """Return the cached PDF outline for this conversion context."""
-    if context.outline is None:
-        context.outline = extract_pdf_outline(context.pdf_path, context.page_numbers)
-    return context.outline
 
 
 def parse_contents_page_title_and_page(text: str) -> tuple[str, int]:
@@ -230,19 +160,7 @@ def extract_contents_outline_from_pdf(
     style_cache: dict[int, list[dict[str, float | str]]] | None = None,
 ) -> list[OutlineEntry]:
     """Extract a best-effort outline from visible contents pages using source layout."""
-    import pymupdf
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        total_pages = doc.page_count
-    finally:
-        doc.close()
-
-    selected_pages = (
-        [page + 1 for page in page_numbers]
-        if page_numbers is not None
-        else list(range(1, total_pages + 1))
-    )
+    selected_pages = selected_pages_1based(get_pdf_page_count(pdf_path), page_numbers)
     if style_cache is None:
         style_cache = {}
     entries_by_page: list[tuple[int, list[dict[str, float | str]]]] = []
@@ -262,29 +180,7 @@ def extract_contents_outline_from_pdf(
         elif not in_contents_run:
             continue
 
-        page_entries: list[dict[str, float | str]] = []
-        for line in lines[start_idx:]:
-            text = str(line["text"]).strip()
-            if not text:
-                continue
-            if looks_like_contents_heading(text):
-                continue
-
-            title, page = parse_contents_page_title_and_page(text)
-            has_leader = bool(re.search(r"[.\u2026]{4,}", text))
-            if not title or looks_like_contents_heading(title):
-                continue
-
-            if not has_leader and page == 0:
-                aligned_with_existing = bool(page_entries) and any(
-                    abs(float(line["x0"]) - float(entry["x0"])) <= 12 for entry in page_entries
-                )
-                if not (aligned_with_existing and looks_like_toc_title_only_line(title)):
-                    if page_entries:
-                        break
-                    continue
-
-            page_entries.append({"x0": float(line["x0"]), "title": title, "page": page})
+        page_entries = extract_contents_entries_from_page_lines(lines[start_idx:])
 
         if page_entries:
             entries_by_page.append((page_no, page_entries))
@@ -307,7 +203,9 @@ def extract_contents_outline_from_pdf(
         for entry in page_entries:
             x0 = float(entry["x0"])
             band_idx = min(range(len(indent_bands)), key=lambda idx: abs(x0 - indent_bands[idx]))
-            level = band_idx + 1
+            layout_level = band_idx + 1
+            explicit_level = infer_explicit_contents_entry_level(str(entry["title"]))
+            level = max(layout_level, explicit_level or layout_level)
             title = str(entry["title"])
             key = (level, title.lower())
             if key in seen:
@@ -318,8 +216,69 @@ def extract_contents_outline_from_pdf(
     return entries
 
 
+def extract_contents_entries_from_page_lines(
+    lines: list[dict[str, float | str]],
+) -> list[dict[str, float | str]]:
+    """Parse visible-TOC entries from source page lines."""
+    explicit_entries: list[dict[str, float | str]] = []
+    title_only_candidates: list[dict[str, float | str]] = []
+    saw_candidate_block = False
+
+    for line in lines:
+        text = str(line["text"]).strip()
+        if not text or looks_like_contents_heading(text):
+            continue
+
+        title, page = parse_contents_page_title_and_page(text)
+        has_leader = bool(re.search(r"[.\u2026]{4,}", text))
+        if not title or looks_like_contents_heading(title):
+            continue
+
+        size = float(line.get("size", 0.0))
+        entry = {"x0": float(line["x0"]), "title": title, "page": page}
+
+        if has_leader or page > 0:
+            explicit_entries.append(entry)
+            saw_candidate_block = True
+            continue
+
+        if looks_like_toc_title_only_line(title) and size <= 14.5:
+            title_only_candidates.append(entry)
+            saw_candidate_block = True
+            continue
+
+        if explicit_entries:
+            break
+        if saw_candidate_block and title_only_candidates:
+            break
+
+    if explicit_entries:
+        return explicit_entries
+
+    if len(title_only_candidates) >= 4:
+        x_positions = [float(entry["x0"]) for entry in title_only_candidates]
+        indent_bands = cluster_indent_levels(x_positions, tolerance=12.0)
+        if len(indent_bands) <= 3:
+            return title_only_candidates
+
+    return []
+
+
 def infer_contents_entry_level(text: str, previous_level: int | None = None) -> int:
     """Infer a structural level for a visible TOC entry."""
+    explicit_level = infer_explicit_contents_entry_level(text)
+    if explicit_level is not None:
+        return explicit_level
+
+    if previous_level == 1:
+        return 2
+    if previous_level is not None:
+        return previous_level
+    return 1
+
+
+def infer_explicit_contents_entry_level(text: str) -> int | None:
+    """Infer an explicit structural level from numbering/chapter cues only."""
     cleaned = sanitize_contents_entry(text)
     lower = cleaned.lower()
 
@@ -333,11 +292,7 @@ def infer_contents_entry_level(text: str, previous_level: int | None = None) -> 
         appendix_prefix = 1 if match.group(1) else 0
         return len(match.group(2).split(".")) + appendix_prefix
 
-    if previous_level == 1:
-        return 2
-    if previous_level is not None:
-        return previous_level
-    return 1
+    return None
 
 
 def extract_contents_outline_from_markdown(md_text: str) -> list[OutlineEntry]:
@@ -439,19 +394,7 @@ def match_headings_to_source_lines(
     if not headings:
         return {}
 
-    import pymupdf
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        page_count = doc.page_count
-    finally:
-        doc.close()
-
-    selected_pages = (
-        [page + 1 for page in page_numbers]
-        if page_numbers is not None
-        else list(range(1, page_count + 1))
-    )
+    selected_pages = selected_pages_1based(get_pdf_page_count(pdf_path), page_numbers)
     if style_cache is None:
         style_cache = {}
     source_lines: list[dict[str, float | str]] = []
@@ -736,6 +679,32 @@ def apply_outline_heading_levels(md_text: str, outline: list[OutlineEntry]) -> s
         lines[line_idx] = f"{'#' * max(inferred_md_level, min(6, current_matched_level + 1))} {text}"
 
     return "\n".join(lines)
+
+
+def reconstruct_heading_structure(md_text: str, context: ConversionContext) -> str:
+    """Apply the strongest available heading-structure source for one document."""
+    pdf_outline = get_cached_outline(context)
+    if pdf_outline:
+        md_text = apply_outline_heading_levels(md_text, pdf_outline)
+    else:
+        contents_outline = extract_contents_outline_from_pdf(
+            context.pdf_path,
+            context.page_numbers,
+            style_cache=context.style_cache,
+        )
+        if not contents_outline:
+            contents_outline = extract_contents_outline_from_markdown(md_text)
+        if contents_outline:
+            md_text = apply_contents_heading_levels(md_text, contents_outline)
+        else:
+            md_text = apply_visual_heading_levels(
+                md_text,
+                context.pdf_path,
+                context.page_numbers,
+                style_cache=context.style_cache,
+            )
+
+    return promote_structured_plaintext_headings(md_text)
 
 
 def strip_contents_sections(md_text: str) -> str:

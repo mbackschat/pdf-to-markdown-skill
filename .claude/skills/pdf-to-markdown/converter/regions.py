@@ -7,6 +7,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .document import extract_page_word_lines
 from .models import Region
 from .text import normalize_inline_spacing, normalize_whitespace
 
@@ -94,55 +95,6 @@ def extract_page_lines_from_bbox_layout(
     return lines
 
 
-def extract_page_lines_from_pymupdf(
-    pdf_path: Path,
-    page_no: int,
-    xml_cache: dict[int, list[dict[str, float | str]]],
-) -> list[dict[str, float | str]]:
-    """Extract positioned lines for one page using PyMuPDF word geometry."""
-    import pymupdf
-
-    cache_key = -page_no
-    if cache_key in xml_cache:
-        return xml_cache[cache_key]
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        page = doc.load_page(page_no - 1)
-        words = page.get_text("words", sort=True)
-    finally:
-        doc.close()
-
-    grouped: dict[tuple[int, int], list[tuple[float, float, float, float, str]]] = {}
-    for word in words:
-        x0, y0, x1, y1, text, block_no, line_no, _word_no = word[:8]
-        if not str(text).strip():
-            continue
-        grouped.setdefault((int(block_no), int(line_no)), []).append(
-            (float(x0), float(y0), float(x1), float(y1), str(text))
-        )
-
-    lines: list[dict[str, float | str]] = []
-    for (_block_no, _line_no), entries in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1])):
-        entries.sort(key=lambda item: item[0])
-        text = " ".join(entry[4] for entry in entries).rstrip()
-        if not text:
-            continue
-        lines.append(
-            {
-                "x0": min(entry[0] for entry in entries),
-                "y0": min(entry[1] for entry in entries),
-                "x1": max(entry[2] for entry in entries),
-                "y1": max(entry[3] for entry in entries),
-                "text": text,
-                "words": [{"x0": entry[0], "x1": entry[2], "text": entry[4]} for entry in entries],
-            }
-        )
-
-    xml_cache[cache_key] = lines
-    return lines
-
-
 def extract_page_line_infos(
     pdf_path: Path,
     page_no: int,
@@ -155,7 +107,7 @@ def extract_page_line_infos(
             return lines
     except (subprocess.SubprocessError, ET.ParseError, OSError):
         pass
-    return extract_page_lines_from_pymupdf(pdf_path, page_no, xml_cache)
+    return extract_page_word_lines(pdf_path, page_no, xml_cache)
 
 
 def line_overlaps_box(line: dict[str, float | str], box: list[int]) -> bool:

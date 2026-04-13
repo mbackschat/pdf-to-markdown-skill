@@ -73,6 +73,20 @@ class ImageOutputTests(unittest.TestCase):
             self.assertTrue(images_dir.exists())
             self.assertEqual(list(images_dir.iterdir()), [])
 
+    def test_move_extracted_images_recreates_destination_dir(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            extraction_images_dir = tmp_path / "tmp_images"
+            extraction_images_dir.mkdir()
+            (extraction_images_dir / "figure.png").write_text("image", encoding="utf-8")
+
+            images_dir = tmp_path / "final_images"
+            convert.move_extracted_images(extraction_images_dir, images_dir)
+
+            self.assertTrue(images_dir.exists())
+            self.assertTrue((images_dir / "figure.png").exists())
+            self.assertEqual((images_dir / "figure.png").read_text(encoding="utf-8"), "image")
+
 
 class HeadingCleanupTests(unittest.TestCase):
     def test_remove_running_headers_keeps_real_heading_depth(self):
@@ -364,6 +378,30 @@ class HeadingCleanupTests(unittest.TestCase):
         self.assertIn("POWER SWITCH", cleaned)
         self.assertIn("BRIGHTNESS CONTROL", cleaned)
 
+    def test_captionish_heading_context_is_demoted(self):
+        small_source = {"size": 12.0}
+        self.assertTrue(
+            reference_entries.looks_like_captionish_heading_context(
+                "WD 1772 Floppy Disk Controller Specification",
+                small_source,
+                "|A|B|",
+            )
+        )
+        self.assertTrue(
+            reference_entries.looks_like_captionish_heading_context(
+                "Where:",
+                small_source,
+                "- 0 = always 0",
+            )
+        )
+        self.assertFalse(
+            reference_entries.looks_like_captionish_heading_context(
+                "2.2.1 USER CONTROL NAMES AND OPERATIONS",
+                small_source,
+                "|A|B|",
+            )
+        )
+
 
 class ListingCleanupTests(unittest.TestCase):
     def test_merge_fenced_block_with_code_bullets(self):
@@ -398,6 +436,41 @@ class TocFallbackTests(unittest.TestCase):
             )
         )
         self.assertFalse(headings.looks_like_toc_title_only_line("Ends like prose."))
+
+    def test_extract_contents_entries_from_title_only_page_lines(self):
+        page_lines = [
+            {"x0": 72.0, "size": 14.0, "text": "CHAPTER 1. INTRODUCTION"},
+            {"x0": 72.0, "size": 12.0, "text": "1.1 GENERAL INFORMATION"},
+            {"x0": 72.0, "size": 14.0, "text": "CHAPTER 2. USING THE MULTISYNC 3D"},
+            {"x0": 72.0, "size": 12.0, "text": "2.1 GETTING ACQUAINTED WITH YOUR MULTISYNC 3D COLOR MONITOR"},
+            {"x0": 86.4, "size": 12.0, "text": "2.2.1 USER CONTROL NAMES AND OPERATIONS"},
+        ]
+        entries = headings.extract_contents_entries_from_page_lines(page_lines)
+        self.assertEqual(
+            [entry["title"] for entry in entries],
+            [
+                "CHAPTER 1. INTRODUCTION",
+                "1.1 GENERAL INFORMATION",
+                "CHAPTER 2. USING THE MULTISYNC 3D",
+                "2.1 GETTING ACQUAINTED WITH YOUR MULTISYNC 3D COLOR MONITOR",
+                "2.2.1 USER CONTROL NAMES AND OPERATIONS",
+            ],
+        )
+
+    def test_extract_contents_entries_rejects_prose_page(self):
+        page_lines = [
+            {"x0": 72.0, "size": 12.0, "text": "General information about the product and how to use it safely."},
+            {"x0": 72.0, "size": 12.0, "text": "This paragraph is normal body prose and should not become a TOC."},
+            {"x0": 72.0, "size": 12.0, "text": "Another body paragraph with punctuation."},
+        ]
+        self.assertEqual(headings.extract_contents_entries_from_page_lines(page_lines), [])
+
+    def test_infer_explicit_contents_entry_level_only_uses_real_structure_cues(self):
+        self.assertEqual(headings.infer_explicit_contents_entry_level("COMMAND DESCRIPTION"), None)
+        self.assertEqual(headings.infer_explicit_contents_entry_level("COMMAND SUMMARY"), None)
+        self.assertEqual(headings.infer_explicit_contents_entry_level("Flag Summary"), None)
+        self.assertEqual(headings.infer_explicit_contents_entry_level("1.1 GENERAL INFORMATION"), 2)
+        self.assertEqual(headings.infer_explicit_contents_entry_level("2.2.1 USER CONTROL NAMES AND OPERATIONS"), 3)
 
     def test_promote_structured_plaintext_headings_is_conservative(self):
         source = "\n".join(

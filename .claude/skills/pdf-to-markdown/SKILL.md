@@ -7,21 +7,23 @@ allowed-tools: Bash(uv run:*), Read
 
 Convert PDF files to Markdown using PyMuPDF4LLM. Optimized for technical documentation (datasheets, hardware manuals, programming guides) with tables, diagrams, and code listings. `--ocr` or `--scan` forces OCR for scanned documents. `--auto-ocr` opt-in enables OCR only when selected pages are image-only.
 
-The converter also applies post-processing to improve headings, contents pages, tables, lists, and flattened preformatted listings.
+The converter also applies post-processing to improve:
 
-When the PDF contains a built-in outline/bookmark tree, that outline is used internally to repair Markdown heading nesting. If there is no embedded outline, the converter next tries to recover structure from visible contents pages, including their indentation/layout when available. If source-page TOC layout is unavailable, it falls back to visible contents recovered from extracted Markdown. If neither source exists, it falls back to source-page heading typography. Visible contents pages are stripped from the final Markdown because Markdown readers already expose the heading hierarchy.
+- heading hierarchy
+- visible contents-page handling
+- tables and lists
+- flattened preformatted listings
+- extracted image path handling
 
-Visible contents sections are treated mainly as internal structure data, not as final output. The goal is to reconstruct the Markdown heading tree so reader apps can provide navigation directly from headings.
+Important behavior for agents:
 
-It also performs a region-based structural repair pass that can reconstruct:
+- Prefer no OCR for born-digital PDFs.
+- Use `--ocr` / `--scan` only when the PDF is scanned, image-only, or has a broken text layer.
+- `--auto-ocr` enables OCR only for image-only pages.
+- Built-in PDF outlines are preferred for heading structure; visible contents pages are the next fallback.
+- Visible contents pages are usually removed from final Markdown because markdown readers already provide heading navigation.
 
-- two-column command/description layouts
-- aligned preformatted listings
-- indented syntax and file-list examples
-- multi-page listings that were split only by chunk/page boundaries
-
-Repository-wide implementation notes and current limitations live in the root `CLAUDE.md`.
-Regression helpers live under `tests/`, and the default sample corpus now lives in `tests/pdf/`. `PDF_TO_MARKDOWN_SAMPLE_DIR` can still override that root if needed.
+Repository-wide implementation details and limitations live in the root `CLAUDE.md`.
 
 ## How to run
 
@@ -87,15 +89,3 @@ uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/german_doc.pdf" --langs 
 - Diagrams and figures are exported as PNGs in a `<name>_images/` subfolder next to the `.md` file
 - Images are referenced inline in the markdown: `![](name_images/picture_0001.png)`
 - Visible contents pages are stripped from the Markdown output; heading navigation is preserved through the reconstructed Markdown hierarchy
-
-## Notes
-
-- First run downloads PyMuPDF4LLM and OCR dependencies; subsequent runs are fast
-- Requires only `uv` and Python 3.10+
-- On macOS, `auto` prefers Apple Vision via `ocrmac`; elsewhere it prefers RapidOCR
-- If `pdftotext` is installed, the script uses it as the primary geometry source for structured listing recovery
-- If `pdftotext` is unavailable or fails, the script falls back to PyMuPDF word positions for structured listing recovery
-- Built-in PDF outlines are the preferred source for heading hierarchy when present
-- Visible contents-page layout is the next source of heading structure when no embedded outline exists
-- Visible contents recovered from extracted Markdown is the weaker next fallback if source-page TOC layout is unavailable
-- Partial page ranges may limit how much of the original outline can be matched to extracted headings

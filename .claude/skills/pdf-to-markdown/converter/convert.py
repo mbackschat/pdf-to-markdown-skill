@@ -9,10 +9,10 @@ import time
 from pathlib import Path
 
 from . import cleanup
-from .headings import extract_page_style_lines
+from .document import detect_text_pages
 from .models import ConversionContext
 from .ocr import get_ocr_function, map_lang_codes, resolve_ocr_resolution
-from .reference_entries import looks_like_contents_page
+from .page_types import page_is_contents
 from .regions import restore_code_blocks_in_chunk
 from .text import sanitize_stem
 
@@ -37,27 +37,6 @@ def build_page_numbers(page_range: tuple[int, int] | None, page_count: int) -> l
     if start < 1 or end < start or end > page_count:
         raise ValueError(f"Invalid page range {start}-{end} for document with {page_count} pages")
     return list(range(start - 1, end))
-
-
-def detect_text_pages(pdf_path: Path, page_numbers: list[int] | None) -> tuple[int, int]:
-    """Return (pages_with_text, pages_without_text) for the selected pages."""
-    import pymupdf
-    import re
-
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        selected = page_numbers if page_numbers is not None else list(range(doc.page_count))
-        with_text = 0
-        without_text = 0
-        for page_no in selected:
-            text = doc.load_page(page_no).get_text("text")
-            if re.search(r"\S", text):
-                with_text += 1
-            else:
-                without_text += 1
-        return with_text, without_text
-    finally:
-        doc.close()
 
 
 def collect_pdf_files(input_path: Path) -> list[Path]:
@@ -97,6 +76,20 @@ def reset_images_dir(images_dir: Path) -> None:
                 child.unlink()
     else:
         images_dir.mkdir(parents=True, exist_ok=True)
+
+
+def move_extracted_images(extraction_images_dir: Path, images_dir: Path) -> None:
+    """Move extracted images into the final output directory, recreating it if needed."""
+    images_dir.mkdir(parents=True, exist_ok=True)
+    for src in extraction_images_dir.iterdir():
+        target = images_dir / src.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        shutil.move(str(src), str(target))
 
 
 def extract_markdown(
@@ -140,20 +133,11 @@ def extract_markdown(
                 page_no,
                 context.geometry_cache,
             )
-            if looks_like_contents_page(
-                extract_page_style_lines(pdf_path, page_no, context.style_cache)
-            ):
+            if page_is_contents(context, page_no):
                 continue
             page_texts.append(page_text.strip())
 
-        for src in extraction_images_dir.iterdir():
-            target = images_dir / src.name
-            if target.exists():
-                if target.is_dir():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
-            shutil.move(str(src), str(target))
+        move_extracted_images(extraction_images_dir, images_dir)
 
         md_text = "\n\n".join(text for text in page_texts if text).strip() + "\n"
         return md_text, extraction_images_dir
