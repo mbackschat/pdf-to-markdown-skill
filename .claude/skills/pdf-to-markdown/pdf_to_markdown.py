@@ -33,7 +33,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         help="Output .md file path (default: next to the source PDF)",
     )
-    parser.add_argument("--pages", help="Page range, e.g. '1-50' (default: all)")
+    parser.add_argument(
+        "--pages",
+        help="Pages to convert, 1-based: a range like '1-50' or a list like '1-3,7,9-10' (default: all)",
+    )
+    parser.add_argument(
+        "--page-separators",
+        action="store_true",
+        help="Start every page with a '{N}' + 48-dash marker line (N = PDF page number) so "
+        "consumers can map text back to pages; empty pages keep their marker",
+    )
+    parser.add_argument(
+        "--no-images",
+        action="store_true",
+        help="Do not extract images; the Markdown keeps text only",
+    )
+    parser.add_argument(
+        "--hidden-text",
+        choices=["text", "ocr", "off"],
+        default="text",
+        help="Pages whose text PyMuPDF4LLM drops (tiny scanner OCR layers): keep the PDF "
+        "text layer (text, default), OCR the page (ocr), or leave it empty (off)",
+    )
     parser.add_argument(
         "--ocr",
         "--scan",

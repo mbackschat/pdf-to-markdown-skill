@@ -108,7 +108,10 @@ Write near-raw extracted markdown while still fixing image references:
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Output `.md` file path (default: next to the source PDF) |
-| `--pages` | Page range, e.g. `1-50` (default: all pages) |
+| `--pages` | Pages to convert, 1-based: a range like `1-50` or a list like `1-3,7,9-10` (default: all pages) |
+| `--page-separators` | Start every page with a `{N}` + 48-dash marker line (`N` = PDF page number); empty pages keep their marker, so consumers can map text back to pages |
+| `--no-images` | Skip image extraction; the Markdown keeps text only |
+| `--hidden-text` | What to do with pages whose text layer PyMuPDF4LLM drops (tiny scanner OCR fonts): `text` keeps the PDF text layer (default), `ocr` OCRs the page, `off` leaves it empty |
 | `--ocr` / `--scan` | Force full-page OCR for scanned PDFs or broken text layers. |
 | `--auto-ocr` | Enable OCR only when selected pages are image-only. |
 | `--ocr-engine` | `auto` (default), `mac`, `rapidocr`, `tesseract` |
@@ -129,6 +132,8 @@ Write near-raw extracted markdown while still fixing image references:
 
 - Born-digital PDFs usually produce the best results.
 - Scanned PDFs can work well with `--ocr`, but OCR quality still depends on the source document.
+- Scanner PDFs that already carry an OCR text layer often set it in 3-6 pt invisible fonts. PyMuPDF4LLM drops text that small, so such pages would come out empty; the converter detects them (under a quarter of the page's words survived) and keeps the PDF text layer by default (`--hidden-text text`).
+- `--page-separators` emits the same `{N}` + 48-dash page markers Marker uses, so pipelines that attach page numbers to extracted text can consume the output directly.
 - Built-in PDF outlines are preferred when available. If no outline exists, the converter tries visible TOC pages and then falls back to page typography.
 - For deeper implementation notes, regression strategy, and maintenance guidance, see [CLAUDE.md](./CLAUDE.md).
 

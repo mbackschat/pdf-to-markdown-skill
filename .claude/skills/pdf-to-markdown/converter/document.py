@@ -47,6 +47,46 @@ def detect_text_pages(pdf_path: Path, page_numbers: list[int] | None) -> tuple[i
         doc.close()
 
 
+HIDDEN_TEXT_MIN_WORDS = 20
+HIDDEN_TEXT_KEEP_RATIO = 0.25
+
+
+def page_plain_text(pdf_path: Path, page_no: int) -> str:
+    """Return the page's own text layer (1-based page) as plain text."""
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        return doc.load_page(page_no - 1).get_text("text")
+    finally:
+        doc.close()
+
+
+def hidden_text_pages(pdf_path: Path, chunk_texts: dict[int, str]) -> list[int]:
+    """Pages (1-based) whose extracted chunk kept under a quarter of the page's words.
+
+    Scanner OCR layers are frequently set in 3-6 pt fonts under the page image.
+    PyMuPDF4LLM drops such tiny text, so the page reads as nearly empty although
+    PyMuPDF reports a full text layer. Pages with fewer than
+    ``HIDDEN_TEXT_MIN_WORDS`` words are ignored so stripped headers and footers
+    on sparse pages do not trigger the fallback.
+    """
+    import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        hidden: list[int] = []
+        for page_no, chunk_text in sorted(chunk_texts.items()):
+            page_words = len(doc.load_page(page_no - 1).get_text("words"))
+            if page_words < HIDDEN_TEXT_MIN_WORDS:
+                continue
+            if len(chunk_text.split()) < HIDDEN_TEXT_KEEP_RATIO * page_words:
+                hidden.append(page_no)
+        return hidden
+    finally:
+        doc.close()
+
+
 def extract_page_style_lines(
     pdf_path: Path,
     page_no: int,

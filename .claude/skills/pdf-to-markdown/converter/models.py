@@ -51,6 +51,9 @@ class ConversionContext:
     outline: list[OutlineEntry] | None = None
     with_text: int = 0
     without_text: int = 0
+    # 1-based pages whose PyMuPDF4LLM chunk lost most of the page's text layer
+    # (scanner OCR layers are often set in tiny fonts that PyMuPDF4LLM drops).
+    hidden_text_pages: list[int] = field(default_factory=list)
 
 
 @dataclass

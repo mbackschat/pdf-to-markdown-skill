@@ -34,6 +34,15 @@ If information is mainly useful to someone improving the converter, it belongs i
 - OCR policy:
   - `--ocr` / `--scan` forces OCR
   - `--auto-ocr` opt-in enables OCR only for image-only pages
+- Hidden text layers (`--hidden-text`, default `text`):
+  - scanner software writes OCR layers as 3-6 pt invisible text under the page image, and PyMuPDF4LLM drops text that small
+  - `document.hidden_text_pages` flags a page when its chunk kept under a quarter of the page's words (pages under 20 words are ignored)
+  - `text` refills the page from the PDF's own text layer, `ocr` renders and OCRs it, `off` keeps the empty chunk
+  - a forced-OCR run skips the check because OCR already replaced every page
+- Page selection and markers:
+  - `--pages` takes ranges and lists (`1-3,7,9-10`)
+  - `--page-separators` emits the Marker-style `{N}` + 48-dash line before every selected page, empty pages included, with `N` the 1-based PDF page
+  - `--no-images` skips image extraction entirely
 - Default OCR backend:
   - macOS: Apple Vision via `ocrmac`
   - other platforms: RapidOCR
@@ -229,7 +238,8 @@ The goal is not to make one fixture perfect in isolation. The goal is to keep th
 - Some non-code structured regions, especially heavily flattened inline bullet runs, still need post-processing cleanup.
 - `--threads` is kept for interface compatibility but is currently unused.
 - Some region/grouping decisions are still threshold-driven, so the converter is cleaner but not heuristic-free.
-- `--auto-ocr` is intentionally narrow and only reacts to image-only pages, not generally poor text layers.
+- `--auto-ocr` is intentionally narrow and only reacts to image-only pages, not generally poor text layers; hidden-text recovery covers the dropped-tiny-font case only, by a word-count ratio, not a quality judgement of the text layer.
+- `--page-separators` runs the whole-document cleanup over text that contains the marker lines. `tests/test_page_handling.py` checks the markers survive; keep that test green when adding cleanup rules.
 
 ## Regression Helpers
 

@@ -1,7 +1,7 @@
 ---
 name: pdf-to-markdown
 description: Convert PDF files to Markdown using a PyMuPDF4LLM digital-first pipeline with explicit OCR flags for scanned or image-only documents. Use when user wants to convert PDF documentation to markdown.
-argument-hint: <pdf-path-or-folder> [--ocr|--scan] [--auto-ocr] [--output FILE] [--pages RANGE] [--ocr-engine ENGINE] [--langs LANGS] [--skip-heading-pipeline|--skip-text-cleaning|--skip-all-cleanup]
+argument-hint: <pdf-path-or-folder> [--ocr|--scan] [--auto-ocr] [--output FILE] [--pages RANGE_OR_LIST] [--page-separators] [--no-images] [--hidden-text text|ocr|off] [--ocr-engine ENGINE] [--langs LANGS] [--skip-heading-pipeline|--skip-text-cleaning|--skip-all-cleanup]
 allowed-tools: Bash(uv run:*), Read
 ---
 
@@ -20,6 +20,8 @@ Important behavior for agents:
 - Prefer no OCR for born-digital PDFs.
 - Use `--ocr` / `--scan` only when the PDF is scanned, image-only, or has a broken text layer.
 - `--auto-ocr` enables OCR only for image-only pages.
+- Scanner PDFs with a tiny invisible OCR text layer are handled automatically: the converter keeps the PDF's own text for pages PyMuPDF4LLM would otherwise empty (`--hidden-text text`, the default). Pass `--hidden-text ocr` to OCR those pages instead.
+- Use `--page-separators` when the output must stay mappable to PDF pages (each page starts with a `{N}` + 48-dash line), and `--no-images` for text-only output.
 - Built-in PDF outlines are preferred for heading structure; visible contents pages are the next fallback.
 - Visible contents pages are usually removed from final Markdown because markdown readers already provide heading navigation.
 
@@ -91,7 +93,10 @@ uv run ${CLAUDE_SKILL_DIR}/pdf_to_markdown.py "/path/to/manual.pdf" --skip-all-c
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Output `.md` file path (default: next to the source PDF as `<name>.md`) |
-| `--pages` | Page range, e.g. `1-50` (default: all pages) |
+| `--pages` | Pages to convert, 1-based: a range like `1-50` or a list like `1-3,7,9-10` (default: all pages) |
+| `--page-separators` | Start every page with a `{N}` + 48-dash marker line (`N` = PDF page number); empty pages keep their marker |
+| `--no-images` | Skip image extraction; text-only Markdown |
+| `--hidden-text` | Pages whose text layer PyMuPDF4LLM drops (tiny scanner OCR fonts): `text` keeps the PDF text layer (default), `ocr` OCRs the page, `off` leaves it empty |
 | `--ocr` / `--scan` | Force full-page OCR for scanned PDFs or broken text layers. Use when user says "scanned", "scan", or "ocr". |
 | `--auto-ocr` | Enable OCR only when selected pages are image-only. |
 | `--ocr-engine` | `auto` (default), `mac`, `rapidocr`, `tesseract` |
